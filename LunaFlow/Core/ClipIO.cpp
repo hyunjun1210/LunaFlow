@@ -1,4 +1,4 @@
-#include "Core/Scene.h"
+#include "Core/Serialization.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <cmath>
@@ -22,7 +22,7 @@ static Json Header(const char* format) {
     return {{"format", format}, {"version", 1}, {"coordinates", {{"handedness", "left"}, {"up", "+Y"}, {"unit", "meter"},
         {"quaternion", "xyzw"}, {"matrix", "row-vector; local = S*R*T; global = local*parent"}}}};
 }
-static void Write(const std::filesystem::path& path, const Json& j) {
+void WriteJsonFile(const std::filesystem::path& path, const Json& j) {
     // Serialize before opening so malformed values cannot truncate an existing file.
     const std::string contents = j.dump(2, ' ', false, Json::error_handler_t::strict);
     auto temporary=path;
@@ -39,25 +39,27 @@ static void Write(const std::filesystem::path& path, const Json& j) {
     }
 }
 void SaveSkeleton(const std::filesystem::path& p, const SkeletonData& s) {
-    Json j = Header("lunaflow.skeleton"); j["bones"] = Skeleton(s); Write(p, j);
+    Json j = Header("lunaflow.skeleton"); j["bones"] = Skeleton(s); WriteJsonFile(p, j);
 }
 template<class T> static Json Keys(const std::vector<Key<T>>& keys) {
     Json j = Json::array();
     for (const auto& k : keys) j.push_back({{"time", k.time}, {"value", Vec(k.value)}});
     return j;
 }
-void SaveClip(const std::filesystem::path& p, const SkeletonData& s, const AnimationClip& clip) {
+Json EncodeClip(const SkeletonData& s, const AnimationClip& clip) {
     PlaybackDuration(clip);
     Json j = Header("lunaflow.clip");
     j["id"] = clip.id; j["name"] = clip.name; j["duration"] = clip.duration; j["speed"] = clip.speed;
+    j["revision"]=clip.revision;j["loop"]=clip.loop;
     j["bones"] = Skeleton(s); j["tracks"] = Json::array();
     for (const auto& t : clip.tracks) {
         if (t.bone >= s.bones.size()) throw std::runtime_error("Cannot save a track with an unknown bone.");
         j["tracks"].push_back({{"bonePath", s.bones[t.bone].path}, {"positions", Keys(t.positions)},
             {"rotations", Keys(t.rotations)}, {"scales", Keys(t.scales)}});
     }
-    Write(p, j);
+    return j;
 }
+void SaveClip(const std::filesystem::path& p,const SkeletonData& s,const AnimationClip& clip) {WriteJsonFile(p,EncodeClip(s,clip));}
 static float Number(const Json& j) {
     float f = j.get<float>(); if (!std::isfinite(f)) throw std::runtime_error("Non-finite transform value."); return f;
 }
@@ -90,6 +92,9 @@ AnimationClip LoadClip(const std::filesystem::path& p, const SkeletonData& s) {
     std::ifstream f(p, std::ios::binary); if (!f) throw std::runtime_error("Cannot open the clip JSON.");
     if (std::filesystem::file_size(p) > 64 * 1024 * 1024) throw std::runtime_error("Clip JSON exceeds 64 MB.");
     Json j; f >> j;
+    return DecodeClip(j,s);
+}
+AnimationClip DecodeClip(const Json& j,const SkeletonData& s) {
     if (j.at("format") != "lunaflow.clip" || j.at("version") != 1) throw std::runtime_error("Expected lunaflow.clip version 1.");
     const auto& c = j.at("coordinates");
     if (c.at("handedness") != "left" || c.at("up") != "+Y" || c.at("unit") != "meter" || c.at("quaternion") != "xyzw")
@@ -97,6 +102,8 @@ AnimationClip LoadClip(const std::filesystem::path& p, const SkeletonData& s) {
     AnimationClip clip;
     clip.id = j.at("id").get<std::string>(); clip.name = j.at("name").get<std::string>();
     clip.duration = j.at("duration").get<double>(); clip.speed = j.value("speed", 1.0);
+    clip.revision=j.value("revision",uint64_t{0});clip.loop=j.value("loop",true);
+    if(clip.id.empty()||clip.name.empty())throw std::runtime_error("Clip ID and name cannot be empty.");
     PlaybackDuration(clip);
     std::unordered_map<std::string, uint32_t> indices;
     for (uint32_t i = 0; i < s.bones.size(); ++i) indices.emplace(s.bones[i].path, i);
@@ -122,6 +129,6 @@ void SaveBake(const std::filesystem::path& p, const SkeletonData& s, const Baked
         Json transforms = Json::array(); for (const auto& t : frame.local) transforms.push_back(TRS(t));
         j["frames"].push_back({{"time", frame.time}, {"local", std::move(transforms)}});
     }
-    Write(p, j);
+    WriteJsonFile(p, j);
 }
 }

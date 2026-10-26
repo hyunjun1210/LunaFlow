@@ -1,4 +1,14 @@
 #include "Rendering/RendererDX11.h"
+#include "Rendering/ViewportInteraction.h"
+#include "Core/Primitives.h"
+#include "Core/ProjectIO.h"
+#include "Core/EditorCommands.h"
+#include "Core/SceneExporter.h"
+#include "App/EditorSettings.h"
+#include "Core/SceneAssembly.h"
+#include "Core/UnityPackage.h"
+#include "AgentBridge/AgentSession.h"
+#include <thread>
 #include <assimp/Importer.hpp>
 #include <assimp/config.h>
 #include <assimp/scene.h>
@@ -182,7 +192,103 @@ static std::vector<uint8_t> Pixels(ID3D11Device* device,ID3D11DeviceContext* con
     for(unsigned y=0;y<desc.Height;++y) std::memcpy(result.data()+static_cast<size_t>(y)*desc.Width*4,static_cast<uint8_t*>(map.pData)+static_cast<size_t>(y)*map.RowPitch,desc.Width*4);
     context->Unmap(staging.Get(),0);return result;
 }
-static void TestRendering(const std::filesystem::path& out,const ModelAsset& animated) {
+static void TestEditorFeatures(const std::filesystem::path& out) {
+    auto scene=MakeEmptyScene();
+    for(auto type:{Primitive::Cube,Primitive::Sphere,Primitive::Cylinder,Primitive::Cone,Primitive::Plane,Primitive::Torus})AddPrimitive(scene,type,{static_cast<float>(scene.meshes.size())*2,0,0});
+    Require(scene.meshes.size()==6,"All six primitives are additive");
+    for(const auto& mesh:scene.meshes){Require(!mesh.vertices.empty()&&!mesh.indices.empty(),"Primitive has geometry");for(auto index:mesh.indices)Require(index<mesh.vertices.size(),"Primitive indices valid");}
+    auto& clip=scene.clips[0];Transform tr;tr.translation={2,0,0};SetTransformKey(clip,1,1,tr);tr.translation.x=4;SetTransformKey(clip,1,2,tr);
+    auto placement=scene;placement.clips.push_back(NewClip("Other motion"));Transform base;base.translation={3,0,0};SetObjectTransform(placement,1,base);
+    Near(EvaluatePose(placement.skeleton,&placement.clips[0],1).local[1].translation.x,5,1e-6,"Scene placement preserves animation delta");
+    Near(EvaluatePose(placement.skeleton,&placement.clips[1],1).local[1].translation.x,3,1e-6,"Scene placement persists across motions");
+    const auto oldRevision=clip.revision;const auto originalId=clip.id;
+    Json rename={{"type","rename_clip"},{"clipId",clip.id},{"expectedRevision",clip.revision},{"args",{{"name","테스트 동작"}}}};
+    ApplyEditorCommand(scene.clips,scene.skeleton,rename);Require(scene.clips[0].name=="테스트 동작","Shared rename command");
+    Throws([&]{ApplyEditorCommand(scene.clips,scene.skeleton,rename);},"Stale command rejected");
+    Require(scene.clips[0].revision==oldRevision+1,"Revision conflict is nonmutating");
+    ApplyEditorCommand(scene.clips,scene.skeleton,{{"type","duplicate_clip"},{"clipId",originalId},{"expectedRevision",scene.clips[0].revision}});
+    Require(scene.clips[1].id!=originalId,"Duplicate gets unique ID");
+    tr.translation.x=20;SetTransformKey(scene.clips[1],1,1,tr);Near(EvaluatePose(scene.skeleton,&scene.clips[0],1).local[1].translation.x,2,1e-6,"Duplicate keys are independent");
+    RetimeClip(scene.clips[0],1.5);Near(scene.clips[0].tracks[0].positions[0].time,.5,1e-8,"Retime scales key times");
+    MoveBoneKey(scene.clips[0],1,.5,1);Require(scene.clips[0].tracks[0].positions.size()==1,"Moving key onto another replaces duplicate timestamp");
+    ProjectData project;project.model=scene;project.selectedClipId=scene.clips[1].id;project.selectedBonePath=scene.skeleton.bones[2].path;project.time=.7;
+    SaveProject(out/L"작업.lunaflow",project);const auto restored=LoadProject(out/L"작업.lunaflow");
+    Require(restored.model.meshes.size()==6&&restored.model.clips.size()==2,"Project restores geometry and all motions");
+    Require(restored.selectedClipId==project.selectedClipId,"Project restores stable selection");
+    for(size_t i=0;i<scene.clips.size();++i)SamePose(EvaluatePose(scene.skeleton,&scene.clips[i],.5),EvaluatePose(restored.model.skeleton,&restored.model.clips[i],.5));
+    Json bad;{std::ifstream f(out/L"작업.lunaflow");f>>bad;}bad["scene"]["meshes"][0]["indices"][0]=999999;
+    {std::ofstream f(out/"bad-project.json");f<<bad.dump();}Throws([&]{LoadProject(out/"bad-project.json");},"Broken project mesh rejected");
+    EditorSettings settings;settings.korean=false;settings.vsync=false;settings.frameLimit=240;settings.bakeFps=120;
+    SaveSettings(out/"preferences.json",settings);auto saved=LoadSettings(out/"preferences.json");Require(!saved.korean&&!saved.vsync&&saved.frameLimit==240&&saved.bakeFps==120,"Language and frame preferences persist");
+    const auto view=XMMatrixLookAtLH(XMVectorSet(0,.5f,-3,1),XMVectorSet(0,.5f,0,1),XMVectorSet(0,1,0,0));
+    const auto vp=view*XMMatrixPerspectiveFovLH(XM_PIDIV4,4.0f/3,.01f,100);
+    const auto center=ProjectPoint({0,.5f,0},vp,800,600);Near(center.pixel.x,400,1e-4,"Projection x");Near(center.pixel.y,300,1e-4,"Projection y");
+    auto cube=MakeEmptyScene();auto bone=AddPrimitive(cube,Primitive::Cube);auto pose=EvaluatePose(cube.skeleton,nullptr,0);
+    Require(PickSurfaceBone(cube,pose,MakePickRay({400,300},vp,800,600))==static_cast<int>(bone),"Surface picking selects the correct object");
+    const auto joint=ProjectPoint({0,0,0},vp,800,600);Require(PickJoint(cube.skeleton,pose,vp,800,600,joint.pixel)>=0,"Viewport joint picking");
+    const auto parent=XMMatrixScaling(2,3,4)*XMMatrixRotationY(.6f)*XMMatrixTranslation(1,2,3);
+    Transform start;start.translation={.2f,.3f,.4f};const XMFLOAT3 delta{1,-2,.5f};auto moved=TranslateInWorld(start,parent,delta);
+    XMFLOAT4X4 before,after;XMStoreFloat4x4(&before,Matrix(start)*parent);XMStoreFloat4x4(&after,Matrix(moved)*parent);
+    Near(after._41-before._41,delta.x,1e-5,"World drag respects scaled/rotated parent x");Near(after._42-before._42,delta.y,1e-5,"World drag respects parent y");Near(after._43-before._43,delta.z,1e-5,"World drag respects parent z");
+    auto rotated=RotateInWorld(start,parent,{0,1,0},XM_PIDIV2);Near(XMVectorGetX(XMVector4Length(XMLoadFloat4(&rotated.rotation))),1,1e-6,"Viewport rotation keeps unit quaternion");
+    std::cout<<"PASS additive primitives, commands/revisions, project restore, preferences, picking and manipulation\n";
+}
+static void TestFbxExport(const std::filesystem::path& out) {
+    auto demo=MakeDemoScene();auto tr=EvaluatePose(demo.skeleton,&demo.clips[0],1).local[7];tr.rotation=QuaternionFromDegrees({20,10,110});SetTransformKey(demo.clips[0],7,1,tr);
+    RetimeClip(demo.clips[0],1.5);ExportFbx(out/L"수정한_캐릭터.fbx",demo,60);auto restored=ImportScene(out/L"수정한_캐릭터.fbx");
+    Require(restored.clips.size()==demo.clips.size(),"FBX exports multiple animation takes");
+    Require(!restored.meshes.empty(),"Exported FBX retains mesh geometry");
+    for(size_t clip=0;clip<demo.clips.size();++clip){
+        auto it=std::find_if(restored.clips.begin(),restored.clips.end(),[&](const auto& c){return c.name==demo.clips[clip].name;});Require(it!=restored.clips.end(),"FBX take names retained");
+        Near(PlaybackDuration(*it),PlaybackDuration(demo.clips[clip]),.002,"FBX retains retimed duration");
+        for(double fraction:{0.0,.5,1.0}){const double time=PlaybackDuration(demo.clips[clip])*fraction;const auto a=EvaluatePose(demo.skeleton,&demo.clips[clip],time),b=EvaluatePose(restored.skeleton,&*it,time);
+            for(size_t i=0;i<demo.skeleton.bones.size();++i){auto bone=std::find_if(restored.skeleton.bones.begin(),restored.skeleton.bones.end(),[&](const auto& n){return n.name==demo.skeleton.bones[i].name;});Require(bone!=restored.skeleton.bones.end(),"FBX retains bone names");const size_t index=static_cast<size_t>(bone-restored.skeleton.bones.begin());for(size_t n=0;n<16;++n)Near(reinterpret_cast<const float*>(&a.global[i])[n],reinterpret_cast<const float*>(&b.global[index])[n],.004,"FBX preview/export pose agreement");}
+        }
+    }
+    std::cout<<"PASS edited multi-take FBX export, reimport, hierarchy, timing and pose roundtrip\n";
+    auto textured=MakeEmptyScene();AddPrimitive(textured,Primitive::Cube);auto& mat=textured.materials[textured.meshes[0].material];mat.textureWidth=mat.textureHeight=2;
+    mat.textureRGBA={255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,255};ExportFbx(out/"embedded-texture.fbx",textured,60);auto loaded=ImportScene(out/"embedded-texture.fbx");
+    Require(std::any_of(loaded.materials.begin(),loaded.materials.end(),[](const auto& material){return !material.textureBytes.empty();}),"Raw embedded texture survives FBX as PNG");
+}
+static void TestAgentBoundary() {
+    auto model=MakeDemoScene();AgentSession session;session.Reset();
+    auto request=session.Draft(model,model.clips[0],"Rename this motion");const auto otherName=model.clips[1].name;
+    Json response={{"requestId",request["requestId"]},{"sessionId",request["sessionId"]},{"status","completed"},
+        {"command",{{"type","rename_clip"},{"clipId",request["clipId"]},{"expectedRevision",request["expectedRevision"]},{"args",{{"name","Agent renamed"}}}}}};
+    std::thread worker([&]{session.Push(response);});worker.join();bool changed=false;auto messages=session.Drain(model,&changed);
+    Require(changed&&model.clips[0].name=="Agent renamed"&&model.clips[1].name==otherName,"Queued agent result targets its captured clip");
+    const auto revision=model.clips[0].revision;session.Push(response);session.Drain(model,&changed);Require(!changed&&model.clips[0].revision==revision,"Duplicate completion is idempotent");
+    auto stale=session.Draft(model,model.clips[0],"Later response");Transform t=model.skeleton.bones[7].bindLocal;SetTransformKey(model.clips[0],7,1,t);
+    response["requestId"]=stale["requestId"];response["sessionId"]=stale["sessionId"];response["command"]["expectedRevision"]=stale["expectedRevision"];session.Push(response);session.Drain(model,&changed);
+    Require(!changed,"Stale asynchronous response does not overwrite edited motion");
+    session.Push({{"requestId",42}});session.Drain(model,&changed);Require(!changed,"Malformed response is safely rejected");
+    std::cout<<"PASS agent target capture, thread-safe queue, revisions and duplicate/stale response rejection\n";
+}
+static ModelAsset TestAssembly(const std::filesystem::path& out) {
+    auto model=MakeDemoScene();auto prop=MakeEmptyScene();const auto cube=AddPrimitive(prop,Primitive::Cube);
+    prop.skeleton.bones[cube].bindLocal.scale={.12f,1.1f,.06f};
+    const auto objectId=AppendModel(model,prop,"PracticeSword");Require(model.objects.size()==2,"Character and prop coexist");
+    auto hand=std::find_if(model.skeleton.bones.begin(),model.skeleton.bones.end(),[](const auto& b){return b.name=="RightHand";});const int handIndex=static_cast<int>(hand-model.skeleton.bones.begin());
+    AttachObject(model,objectId,handIndex,&model.clips[0],0,false);
+    auto object=std::find_if(model.objects.begin(),model.objects.end(),[&](const auto& o){return o.id==objectId;});const uint32_t swordRoot=object->root;
+    for(double time:{0.0,.7,1.5}){const auto pose=EvaluatePose(model.skeleton,&model.clips[0],time);const int parent=model.skeleton.bones[swordRoot].parent;for(int n=0;n<16;++n)Near(reinterpret_cast<const float*>(&pose.global[swordRoot])[n],reinterpret_cast<const float*>(&pose.global[parent])[n],1e-5,"Attached sword follows hand motion");}
+    Throws([&]{AttachObject(model,objectId,static_cast<int>(swordRoot),&model.clips[0],0);},"Attachment cycle rejected");
+    AddEffect(model,EffectType::Trail,swordRoot,model.clips[0].id,3);model.effects.back().size=1.1f;model.effects.back().intensity=1.7f;
+    AddEffect(model,EffectType::Sparks,swordRoot,model.clips[0].id,3);model.effects.back().color={1,.65f,.2f,1};
+    AddEffect(model,EffectType::Aura,1,model.clips[0].id,3);
+    ProjectData project;project.model=model;project.selectedClipId=model.clips[0].id;project.selectedBonePath=model.skeleton.bones[swordRoot].path;SaveProject(out/"assembly.lunaflow",project);
+    const auto loaded=LoadProject(out/"assembly.lunaflow");Require(loaded.model.objects.size()==2&&loaded.model.effects.size()==3,"Project restores props, attachments and effects");
+    SamePose(EvaluatePose(model.skeleton,&model.clips[0],1),EvaluatePose(loaded.model.skeleton,&loaded.model.clips[0],1));
+    const auto package=out/"UnityPackage"/"Character.lunaflow.json";
+    ExportUnityPackage(package,model,60,std::filesystem::path(LUNAFLOW_SOURCE_DIR).parent_path()/"unity_tools");
+    Require(std::filesystem::exists(package.parent_path()/"Character.fbx"),"Unity package contains real FBX");
+    Require(std::filesystem::exists(package.parent_path()/"Runtime"/"LunaFlowScene.cs"),"Unity runtime included");
+    Json metadata;{std::ifstream f(package);f>>metadata;}Require(metadata["effects"].size()==3&&metadata["objects"].size()==2,"Unity manifest contains effect and assembly contracts");
+    auto roundtrip=ImportScene(package.parent_path()/"Character.fbx");Require(roundtrip.clips.size()==model.clips.size(),"Assembled FBX has all motions");
+    Json reference=Json::array();for(double time:{0.0,.7,1.5}){const auto pose=EvaluatePose(model.skeleton,&model.clips[0],time);Json positions=Json::array();for(size_t i=0;i<model.skeleton.bones.size();++i){const auto& g=pose.global[i];positions.push_back({{"name",model.skeleton.bones[i].name},{"position",{g._41,g._42,g._43}}});}reference.push_back({{"time",time},{"positions",positions}});}WriteJsonFile(out/"unity-reference.json",{{"frames",reference}});
+    std::cout<<"PASS scene assembly, sword attachment, effects, package, native FBX and project roundtrip\n";return model;
+}
+static void TestRendering(const std::filesystem::path& out,const ModelAsset& animated,const ModelAsset& assembly) {
     ComPtr<ID3D11Device> device; ComPtr<ID3D11DeviceContext> context;
     D3D_FEATURE_LEVEL feature; const D3D_FEATURE_LEVEL levels[]={D3D_FEATURE_LEVEL_11_0};
     HRESULT hr=D3D11CreateDevice(nullptr,D3D_DRIVER_TYPE_WARP,nullptr,D3D11_CREATE_DEVICE_DEBUG,levels,1,D3D11_SDK_VERSION,&device,&feature,&context);
@@ -211,6 +317,12 @@ static void TestRendering(const std::filesystem::path& out,const ModelAsset& ani
     auto textured=ImportScene(std::filesystem::path(ASSIMP_TEST_MODELS)/"glTF2"/"BoxTextured-glTF-Embedded"/"BoxTextured.gltf");
     renderer.SetModel(textured);Require(renderer.Warnings().empty(),"WIC loads embedded texture without fallback");renderer.FitCamera(camera);
     renderer.Render(textured,EvaluatePose(textured.skeleton,nullptr,0),camera,options);renderer.SaveScreenshot(out/"textured-box.png");
+    auto distant=MakeEmptyScene();const auto distantBone=AddPrimitive(distant,Primitive::Cube,{30,2,0});renderer.SetModel(distant);renderer.UpdateBounds(distant,EvaluatePose(distant.skeleton,nullptr,0));renderer.FitCamera(camera);
+    Near(camera.target.x,30,1e-4,"Frame all follows moved scene objects");Near(camera.target.y,2.5,1e-4,"Frame all follows object height");Require(distantBone>0,"Distant primitive has object root");
+    renderer.SetModel(assembly);renderer.FitCamera(camera);options.activeClip=&assembly.clips[0];options.time=1.3;options.skeleton=false;
+    options.showEffects=false;renderer.Render(assembly,EvaluatePose(assembly.skeleton,&assembly.clips[0],options.time),camera,options);auto noFx=Pixels(device.Get(),context.Get(),renderer);options.showEffects=true;
+    renderer.Render(assembly,EvaluatePose(assembly.skeleton,&assembly.clips[0],options.time),camera,options);renderer.SaveScreenshot(out/"sword-vfx.png");
+    auto withFx=Pixels(device.Get(),context.Get(),renderer);size_t fxPixels=0;for(size_t i=0;i<withFx.size();i+=4)if(noFx[i]!=withFx[i]||noFx[i+1]!=withFx[i+1]||noFx[i+2]!=withFx[i+2])++fxPixels;Require(fxPixels>200,"VFX produces visible rendered pixels");
     if(debug) for(UINT64 i=0;i<debug->GetNumStoredMessages();++i) {
         SIZE_T size=0;debug->GetMessage(i,nullptr,&size);std::vector<uint8_t> bytes(size);auto* msg=reinterpret_cast<D3D11_MESSAGE*>(bytes.data());debug->GetMessage(i,msg,&size);
         if(msg->Severity==D3D11_MESSAGE_SEVERITY_ERROR || msg->Severity==D3D11_MESSAGE_SEVERITY_CORRUPTION) throw std::runtime_error(msg->pDescription);
@@ -223,7 +335,7 @@ int main() {
     int code=0;
     try {
         const auto out=std::filesystem::current_path()/"test-output";std::filesystem::create_directories(out);
-        TestEvaluation();TestJson(out);auto animated=TestImport();TestRendering(out,animated);
+        TestEvaluation();TestJson(out);TestEditorFeatures(out);TestAgentBoundary();TestFbxExport(out);auto assembly=TestAssembly(out);auto animated=TestImport();TestRendering(out,animated,assembly);
         std::cout<<"All checks passed ("<<assertions<<" assertions). Artifacts: "<<out<<"\n";
     } catch(const std::exception& e) {std::cerr<<"FAIL: "<<e.what()<<"\n";code=1;}
     if(SUCCEEDED(com))CoUninitialize();return code;

@@ -94,12 +94,15 @@ void SetTransformKey(AnimationClip& clip, uint32_t bone, double time, const Tran
     if (it == clip.tracks.end()) { clip.tracks.push_back({bone}); it = clip.tracks.end() - 1; }
     Put(it->positions, time, t.translation); Put(it->rotations, time, rotation); Put(it->scales, time, t.scale);
     clip.duration = std::max(clip.duration, time);
+    ++clip.revision;
 }
 void DeleteTransformKey(AnimationClip& clip, uint32_t bone, double time) {
+    bool changed=false;
     for (auto& t : clip.tracks) if (t.bone == bone) {
-        auto remove = [time](auto& keys) { keys.erase(std::remove_if(keys.begin(), keys.end(), [time](const auto& k) { return std::abs(k.time - time) < 1e-5; }), keys.end()); };
+        auto remove = [time,&changed](auto& keys) {const auto size=keys.size();keys.erase(std::remove_if(keys.begin(), keys.end(), [time](const auto& k) { return std::abs(k.time - time) < 1e-5; }), keys.end());changed|=size!=keys.size();};
         remove(t.positions); remove(t.rotations); remove(t.scales);
     }
+    if(changed)++clip.revision;
 }
 BakedClip BakeClip(const SkeletonData& skeleton, const AnimationClip& clip, double fps) {
     if (!std::isfinite(fps) || fps < 1 || fps > 240) throw std::runtime_error("Bake FPS must be between 1 and 240.");

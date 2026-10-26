@@ -14,11 +14,13 @@ struct Input {
     float2 uv : TEXCOORD0;
     uint4 joints : BLENDINDICES;
     float4 weights : BLENDWEIGHT;
+    float4 color : COLOR0;
 };
 struct Output {
     float4 position : SV_POSITION;
     float3 normal : NORMAL;
     float2 uv : TEXCOORD0;
+    float4 color : COLOR0;
 };
 Output VSMain(Input input)
 {
@@ -32,11 +34,12 @@ Output VSMain(Input input)
     result.position = mul(position,ViewProjection);
     result.normal = normal;
     result.uv = input.uv;
+    result.color = input.color;
     return result;
 }
 float4 PSMain(Output input) : SV_TARGET
 {
-    float4 color = BaseColor;
+    float4 color = BaseColor * input.color;
     if (Options.x > .5) color *= Diffuse.Sample(LinearWrap,input.uv);
     if (Options.y > .5) return color;
     if (color.a < .1) discard;

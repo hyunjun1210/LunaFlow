@@ -98,7 +98,7 @@ ModelAsset MakeDemoScene() {
             tr.rotation=QuaternionFromDegrees({-std::max(0.0f,std::sin(phase)*sign)*35,0,0}); SetTransformKey(walk,bone,t,tr);
         }
     }
-    a.clips={wave,idle,walk}; return a;
+    a.clips={wave,idle,walk};a.objects.push_back({"luna-character","Luna",root});return a;
 }
 ModelAsset MakeCubeScene() {
     ModelAsset a; a.source="Built-in DX11 cube"; a.materials.emplace_back();
@@ -109,6 +109,6 @@ ModelAsset MakeCubeScene() {
         auto t=a.skeleton.bones[0].bindLocal; t.rotation=QuaternionFromDegrees({20,static_cast<float>(i)*45,0});
         SetTransformKey(spin,0,i*.5,t);
     }
-    a.clips.push_back(spin); return a;
+    a.clips.push_back(spin);a.objects.push_back({"cube-character","Cube",0});return a;
 }
 }

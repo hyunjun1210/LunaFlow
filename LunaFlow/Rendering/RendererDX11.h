@@ -14,7 +14,12 @@ struct PreviewCamera {
     XMMATRIX View() const;
     XMMATRIX Projection(float aspect) const;
 };
-struct RenderOptions { bool grid = true, skeleton = false, wireframe = false; int selectedBone = -1; };
+struct RenderOptions {
+    bool grid=true,skeleton=false,wireframe=false,showEffects=true;
+    int selectedBone=-1;
+    const AnimationClip* activeClip=nullptr;
+    double time=0;
+};
 class RendererDX11 {
 public:
     void Initialize(ID3D11Device*, ID3D11DeviceContext*, const std::filesystem::path& shaderDirectory);
@@ -22,6 +27,7 @@ public:
     void Resize(unsigned width,unsigned height);
     void Render(const ModelAsset&, const Pose&, const PreviewCamera&, const RenderOptions&);
     void FitCamera(PreviewCamera&) const;
+    void UpdateBounds(const ModelAsset&,const Pose&);
     ID3D11ShaderResourceView* Texture() const { return colorSRV_.Get(); }
     void SaveScreenshot(const std::filesystem::path&) const;
     unsigned Width() const { return width_; }
@@ -36,7 +42,8 @@ private:
         XMFLOAT4 options; // texture enabled, unlit, unused, unused
     };
     void Draw(const MeshData&,const GpuMesh&,const Pose&,Constants&);
-    void DrawLines(const std::vector<Vertex>&,Constants&);
+    void DrawLines(const std::vector<Vertex>&,Constants&,D3D11_PRIMITIVE_TOPOLOGY topology=D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
+    void DrawEffects(const ModelAsset&,const Pose&,const RenderOptions&,Constants&);
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<ID3D11Texture2D> color_,depth_;
@@ -48,9 +55,10 @@ private:
     ComPtr<ID3D11InputLayout> layout_;
     ComPtr<ID3D11Buffer> constants_,lines_;
     ComPtr<ID3D11RasterizerState> solid_,wire_;
-    ComPtr<ID3D11DepthStencilState> depthState_,overlayState_;
+    ComPtr<ID3D11DepthStencilState> depthState_,overlayState_,effectDepthState_;
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11BlendState> blend_;
+    ComPtr<ID3D11BlendState> additive_;
     std::vector<GpuMesh> meshes_;
     std::vector<ComPtr<ID3D11ShaderResourceView>> textures_;
     std::vector<std::string> warnings_;

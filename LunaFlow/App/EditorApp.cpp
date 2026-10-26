@@ -3,248 +3,192 @@
 #include <commdlg.h>
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 
 namespace LunaFlow {
-static const ImVec4 purple{.72f,.58f,1,1},mint{.36f,.86f,.72f,1},muted{.48f,.54f,.65f,1};
-static void Label(const char* text) { ImGui::TextColored(muted,"%s",text); }
-EditorApp::EditorApp(HWND w,ID3D11Device* d,ID3D11DeviceContext* c,const std::filesystem::path& shaders):window_(w) {
-    renderer_.Initialize(d,c,shaders); renderer_.Resize(900,650); UseModel(MakeDemoScene());
+EditorApp::EditorApp(HWND window,ID3D11Device* device,ID3D11DeviceContext* context,const std::filesystem::path& shaders,const std::filesystem::path& preferences):window_(window) {
+    wchar_t executable[MAX_PATH]{};GetModuleFileNameW(nullptr,executable,MAX_PATH);
+    settingsPath_=preferences.empty()?std::filesystem::path(executable).parent_path()/L"EditorSettings.json":preferences;
+    settings_=LoadSettings(settingsPath_);
+    renderer_.Initialize(device,context,shaders);renderer_.Resize(900,650);
+    options_.skeleton=true;UseModel(MakeDemoScene());
+}
+const char* EditorApp::ClipLabel(const AnimationClip& c) const {
+    if(c.id=="demo-wave"&&c.name=="Wave / right hand")return T("손 흔들기","Wave");
+    if(c.id=="demo-idle"&&c.name=="Idle / breathing")return T("대기 / 호흡","Idle / breathing");
+    if(c.id=="demo-walk"&&c.name=="Walk / in place")return T("제자리 걷기","Walk / in place");
+    if(c.id=="scene-motion"&&c.name=="Scene motion")return T("장면 애니메이션","Scene animation");
+    if(c.id=="demo-cube"&&c.name=="Cube / rotation")return T("큐브 회전","Cube rotation");
+    return c.name.c_str();
+}
+const char* EditorApp::ShapeLabel(Primitive p) const {
+    switch(p) {
+    case Primitive::Cube:return T("큐브","Cube");case Primitive::Sphere:return T("구","Sphere");
+    case Primitive::Cylinder:return T("원기둥","Cylinder");case Primitive::Cone:return T("원뿔","Cone");
+    case Primitive::Plane:return T("평면","Plane");case Primitive::Torus:return T("토러스","Torus");
+    }return "";
 }
 void EditorApp::Try(const std::function<void()>& action) {
     error_=false;
-    try { action(); } catch (const std::exception& e) { status_=e.what(); error_=true; }
+    try{action();}catch(const std::exception& e){status_=std::string(T("작업 실패: ","Operation failed: "))+e.what();error_=true;}
 }
 void EditorApp::UseModel(ModelAsset next) {
-    renderer_.SetModel(next); // Commit only after all GPU buffers have been created.
-    model_=std::move(next); selectedClip_=0; selectedBone_=0; time_=0; editBone_=-1; editClip_=-1;
-    dirty_=false; bindPose_=false; playing_=true; renderer_.FitCamera(camera_);
-    pose_=EvaluatePose(model_.skeleton,&Clip(),time_);
+    renderer_.SetModel(next);model_=std::move(next);
+    selectedClip_=0;selectedBone_=0;time_=0;editBone_=-1;editClip_=-1;primitiveCount_=0;revealSelected_=true;selectedEffect_=-1;
+    dirty_=false;bindPose_=false;playing_=false;draggingBone_=false;undo_.clear();nameClip_=-1;projectPath_.clear();selectedKeyTime_=-1;
+    loop_=Clip().loop;
+    agent_.Reset();
+    renderer_.FitCamera(camera_);pose_=EvaluatePose(model_.skeleton,&Clip(),time_);status_.clear();
+}
+void EditorApp::AddShape(Primitive type) {
+    Try([&]{
+        ModelAsset next=model_;
+        const float offset=static_cast<float>(primitiveCount_+1)*1.5f;
+        const uint32_t bone=AddPrimitive(next,type,model_.meshes.empty()?XMFLOAT3{0,0,0}:XMFLOAT3{offset,0,0});
+        renderer_.SetModel(next);model_=std::move(next);++primitiveCount_;
+        selectedBone_=static_cast<int>(bone);selectedEffect_=-1;editBone_=-1;playing_=false;bindPose_=false;tool_=Tool::Move;revealSelected_=true;
+        SelectWorkspace(0);
+        pose_=EvaluatePose(model_.skeleton,&Clip(),time_);renderer_.FitCamera(camera_);dirty_=true;
+        status_=std::string(ShapeLabel(type))+T(" 추가됨. 뷰포트에서 드래그해 이동하세요."," added. Drag it in the viewport to move.");
+    });
 }
 void EditorApp::LoadModel(const std::filesystem::path& path) {
-    Try([&] { UseModel(ImportScene(path,unitsToMeters_)); status_="Opened " + path.filename().u8string(); });
+    RequestSceneChange([this,path]{Try([&]{UseModel(ImportScene(path,unitsToMeters_));status_=std::string(T("불러옴: ","Opened: "))+path.filename().u8string();});});
 }
 std::filesystem::path EditorApp::Dialog(bool save,const wchar_t* filter,const wchar_t* extension,const wchar_t* filename) {
-    wchar_t file[32768]{}; wcsncpy_s(file,filename,_TRUNCATE);
-    OPENFILENAMEW ofn{}; ofn.lStructSize=sizeof(ofn); ofn.hwndOwner=window_; ofn.lpstrFilter=filter;
-    ofn.lpstrFile=file; ofn.nMaxFile=32768; ofn.lpstrDefExt=extension;
+    wchar_t file[32768]{};wcsncpy_s(file,filename,_TRUNCATE);
+    OPENFILENAMEW ofn{};ofn.lStructSize=sizeof(ofn);ofn.hwndOwner=window_;ofn.lpstrFilter=filter;
+    ofn.lpstrFile=file;ofn.nMaxFile=32768;ofn.lpstrDefExt=extension;
     ofn.Flags=OFN_EXPLORER|OFN_NOCHANGEDIR|OFN_PATHMUSTEXIST|(save?OFN_OVERWRITEPROMPT:OFN_FILEMUSTEXIST);
     const BOOL ok=save?GetSaveFileNameW(&ofn):GetOpenFileNameW(&ofn);
-    if (!ok && CommDlgExtendedError()) throw std::runtime_error("The file dialog could not be opened.");
+    if(!ok&&CommDlgExtendedError())throw std::runtime_error("The file dialog could not be opened.");
     return ok?std::filesystem::path(file):std::filesystem::path{};
 }
-void EditorApp::Toolbar() {
-    ImGui::TextColored(purple,"L U N A F L O W"); ImGui::SameLine(); ImGui::TextDisabled(" /  MOTION STUDIO");
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x-190); ImGui::TextColored(mint,"TEAM A   /   DIRECTX 11");
-    ImGui::Spacing();
-    if (ImGui::Button("Open character",{145,0})) Try([&] {
-        auto path=Dialog(false,L"3D character (*.fbx;*.gltf;*.glb;*.obj)\0*.fbx;*.gltf;*.glb;*.obj\0All files\0*.*\0\0",L"fbx");
-        if (!path.empty()) { UseModel(ImportScene(path,unitsToMeters_)); status_="Opened "+path.filename().u8string(); }
-    });
-    ImGui::SameLine();
-    if (ImGui::Button("Luna demo")) Try([&] { UseModel(MakeDemoScene()); status_="Built-in Luna rig loaded."; });
-    ImGui::SameLine();
-    if (ImGui::Button("Cube")) Try([&] { UseModel(MakeCubeScene()); status_="DX11 cube test loaded."; });
-    ImGui::SameLine(); ImGui::TextDisabled("|"); ImGui::SameLine();
-    if (ImGui::Button("Save motion")) Try([&] {
-        auto p=Dialog(true,L"LunaFlow motion (*.json)\0*.json\0\0",L"json",L"motion.json");
-        if (!p.empty()) { SaveClip(p,model_.skeleton,Clip()); dirty_=false; status_="Motion saved: "+p.u8string(); }
-    });
-    ImGui::SameLine();
-    if (ImGui::Button("Import motion")) Try([&] {
-        auto p=Dialog(false,L"LunaFlow motion (*.json)\0*.json\0\0",L"json");
-        if (!p.empty()) {
-            auto clip=LoadClip(p,model_.skeleton); model_.clips.push_back(std::move(clip));
-            selectedClip_=static_cast<int>(model_.clips.size()-1); time_=0; editClip_=-1; status_="Motion imported for this skeleton.";
+void EditorApp::OpenCharacter() {Try([&]{auto p=Dialog(false,L"3D character (*.fbx;*.gltf;*.glb;*.obj)\0*.fbx;*.gltf;*.glb;*.obj\0All files\0*.*\0\0",L"fbx");if(!p.empty())LoadModel(p);});}
+void EditorApp::SaveMotion() {Try([&]{auto p=Dialog(true,L"LunaFlow motion (*.json)\0*.json\0\0",L"json",L"motion.json");if(!p.empty()){SaveClip(p,model_.skeleton,Clip());status_=T("현재 동작을 저장했습니다. 전체 장면은 프로젝트로 저장하세요.","Current motion saved. Save the project to preserve the entire scene.");}});}
+void EditorApp::ImportMotion() {Try([&]{auto p=Dialog(false,L"LunaFlow motion (*.json)\0*.json\0\0",L"json");if(!p.empty()){auto clip=LoadClip(p,model_.skeleton);model_.clips.push_back(std::move(clip));selectedClip_=static_cast<int>(model_.clips.size()-1);SetTime(0);bindPose_=false;editClip_=-1;status_=T("동작을 불러왔습니다.","Motion imported.");}});}
+void EditorApp::ExportBake() {Try([&]{auto p=Dialog(true,L"Final local poses (*.json)\0*.json\0\0",L"json",L"baked_motion.json");if(!p.empty()){SaveBake(p,model_.skeleton,BakeClip(model_.skeleton,Clip(),settings_.bakeFps));status_=T("최종 자세를 내보냈습니다.","Final poses exported.");}});}
+void EditorApp::ExportSkeleton() {Try([&]{auto p=Dialog(true,L"Skeleton (*.json)\0*.json\0\0",L"json",L"skeleton.json");if(!p.empty()){SaveSkeleton(p,model_.skeleton);status_=T("뼈대 정보를 저장했습니다.","Skeleton saved.");}});}
+void EditorApp::ExportImage() {Try([&]{auto p=Dialog(true,L"Preview image (*.png)\0*.png\0\0",L"png",L"preview.png");if(!p.empty()){renderer_.SaveScreenshot(p);status_=T("미리보기 이미지를 저장했습니다.","Preview image saved.");}});}
+void EditorApp::ExportCharacter() {Try([&]{auto p=Dialog(true,L"FBX character (*.fbx)\0*.fbx\0\0",L"fbx",L"Character.fbx");if(!p.empty()){ExportFbx(p,model_,settings_.bakeFps);status_=T("캐릭터와 모든 동작을 FBX로 내보냈습니다.","Character and all motions exported to FBX.");}});}
+void EditorApp::RememberEdit() {
+    if(undo_.size()>=32)undo_.erase(undo_.begin());UndoState state{selectedClip_,Clip(),{}};
+    if(workspace_==0){size_t count=0;for(const auto& undo:undo_)if(undo.scene)++count;
+        if(count>=4){auto oldest=std::find_if(undo_.begin(),undo_.end(),[](const auto& item){return item.scene!=nullptr;});undo_.erase(oldest);}state.scene=std::make_shared<ModelAsset>(model_);
+    }undo_.push_back(std::move(state));
+}
+void EditorApp::Undo() {
+    if(undo_.empty())return;auto previous=std::move(undo_.back());undo_.pop_back();
+    if(previous.scene){
+        for(auto& clip:previous.scene->clips){auto current=std::find_if(model_.clips.begin(),model_.clips.end(),[&](const auto& c){return c.id==clip.id;});clip.revision=std::max(clip.revision,current!=model_.clips.end()?current->revision:uint64_t{0})+1;}
+        Try([&]{renderer_.SetModel(*previous.scene);model_=std::move(*previous.scene);selectedClip_=std::min(previous.clip,static_cast<int>(model_.clips.size()-1));selectedBone_=std::min(selectedBone_,static_cast<int>(model_.skeleton.bones.size()-1));editBone_=-1;dirty_=true;SetTime(time_);});return;
+    }
+    selectedClip_=previous.clip;previous.value.revision=Clip().revision+1;Clip()=std::move(previous.value);time_=std::min(time_,PlaybackDuration(Clip()));nameClip_=-1;loop_=Clip().loop;
+    playing_=false;dirty_=true;editBone_=-1;pose_=EvaluatePose(model_.skeleton,&Clip(),time_);
+    status_=T("마지막 동작 수정을 되돌렸습니다.","Last motion edit undone.");
+}
+void EditorApp::DuplicateClip() {
+    Dispatch("duplicate_clip",{{"name",std::string(ClipLabel(Clip()))+T(" 복사본"," copy")}});
+}
+void EditorApp::Dispatch(const std::string& type,const Json& args) {
+    Try([&]{
+        const UndoState previous{selectedClip_,Clip()};
+        Json command={{"type",type},{"clipId",Clip().id},{"expectedRevision",Clip().revision},{"args",args}};
+        const auto result=ApplyEditorCommand(model_.clips,model_.skeleton,command);
+        if(type=="delete_clip"){undo_.clear();selectedClip_=std::min(selectedClip_,static_cast<int>(model_.clips.size()-1));}
+        else {
+            const auto id=result.at("clipId").get<std::string>();
+            for(size_t i=0;i<model_.clips.size();++i)if(model_.clips[i].id==id)selectedClip_=static_cast<int>(i);
+            if(type!="new_clip"&&type!="duplicate_clip"){if(undo_.size()>=32)undo_.erase(undo_.begin());undo_.push_back(previous);}
         }
+        dirty_=true;nameClip_=-1;editClip_=-1;loop_=Clip().loop;SetTime(std::min(time_,PlaybackDuration(Clip())));
+        status_=T("동작 명령을 적용했습니다.","Motion command applied.");
     });
-    ImGui::SameLine();
-    ImGui::PushStyleColor(ImGuiCol_Button,{.27f,.20f,.43f,1});
-    if (ImGui::Button("Bake 30 FPS")) Try([&] {
-        auto p=Dialog(true,L"Final local poses (*.json)\0*.json\0\0",L"json",L"baked_motion.json");
-        if (!p.empty()) { SaveBake(p,model_.skeleton,BakeClip(model_.skeleton,Clip(),30)); status_="Final poses saved for Team C: "+p.u8string(); }
-    });
-    ImGui::PopStyleColor(); ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
 }
-void EditorApp::Library() {
-    Label("MOTION LIBRARY"); ImGui::Spacing();
-    for (size_t i=0;i<model_.clips.size();++i) {
-        ImGui::PushID(static_cast<int>(i));
-        if (ImGui::Selectable(model_.clips[i].name.c_str(),selectedClip_==static_cast<int>(i),0,{0,36})) {
-            selectedClip_=static_cast<int>(i); time_=0; editClip_=-1; bindPose_=false;
-        }
-        ImGui::PopID();
-    }
-    ImGui::Spacing();
-    if (ImGui::Button("+ Duplicate motion",{-1,0})) {
-        auto copy=Clip(); copy.id+="-copy-"+std::to_string(model_.clips.size()); copy.name+=" copy";
-        model_.clips.push_back(std::move(copy)); selectedClip_=static_cast<int>(model_.clips.size()-1); editClip_=-1; dirty_=true;
-    }
-    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing(); Label("SKELETON");
-    ImGui::TextDisabled("%zu nodes / parent hierarchy",model_.skeleton.bones.size());
-    ImGui::Spacing();
-    if (ImGui::BeginChild("bones",{0,0},ImGuiChildFlags_None)) {
-        for (size_t i=0;i<model_.skeleton.bones.size();++i) {
-            const auto& b=model_.skeleton.bones[i]; int depth=0;
-            for (int p=b.parent;p>=0;p=model_.skeleton.bones[p].parent) ++depth;
-            ImGui::PushID(static_cast<int>(i)); ImGui::Indent(std::min(depth,6)*10.0f);
-            if (ImGui::Selectable(b.name.c_str(),selectedBone_==static_cast<int>(i))) { selectedBone_=static_cast<int>(i); options_.skeleton=true; }
-            if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",b.path.c_str());
-            ImGui::Unindent(std::min(depth,6)*10.0f); ImGui::PopID();
-        }
-    }
-    ImGui::EndChild();
-}
-void EditorApp::CommitPose() {
-    edit_.rotation=QuaternionFromDegrees(editAngles_);
-    SetTransformKey(Clip(),static_cast<uint32_t>(selectedBone_),std::clamp(time_*Clip().speed,0.0,Clip().duration),edit_);
-    dirty_=true; pose_=EvaluatePose(model_.skeleton,&Clip(),time_,false);
-    status_="Key updated. Preview, saved motion and bake use the same pose."; error_=false;
-}
-void EditorApp::Inspector() {
-    Label("POSE INSPECTOR"); ImGui::Spacing();
-    const auto& bone=model_.skeleton.bones.at(selectedBone_);
-    ImGui::TextColored(purple,"%s",bone.name.c_str());
-    ImGui::TextDisabled("Local transform"); ImGui::Spacing();
-    if (editBone_!=selectedBone_ || editClip_!=selectedClip_ || std::abs(editTime_-time_)>1e-8 || playing_) {
-        edit_=pose_.local.at(selectedBone_); editAngles_=DegreesFromQuaternion(edit_.rotation);
-        editBone_=selectedBone_; editTime_=time_; editClip_=selectedClip_;
-    }
-    if (playing_) ImGui::TextColored(mint,"Pause to edit this pose");
-    else if (bindPose_) ImGui::TextDisabled("Disable bind pose to edit");
-    else ImGui::TextColored(mint,"Changes create a key here");
-    ImGui::Spacing();
-    ImGui::BeginDisabled(playing_ || bindPose_);
-    ImGui::PushItemWidth(-1);
-    Label("Rotation / degrees"); bool changed=ImGui::DragFloat3("##rotation",&editAngles_.x,.5f,0,0,"%.1f");
-    Label("Position / meters"); changed|=ImGui::DragFloat3("##position",&edit_.translation.x,.005f,0,0,"%.3f");
-    Label("Scale"); changed|=ImGui::DragFloat3("##scale",&edit_.scale.x,.005f,.001f,10000,"%.3f",ImGuiSliderFlags_AlwaysClamp);
-    ImGui::PopItemWidth();
-    if (changed) Try([&] { CommitPose(); });
-    if (ImGui::Button("Set key",{-1,0})) Try([&] { CommitPose(); });
-    if (ImGui::Button("Reset to bind + key",{-1,0})) Try([&] { edit_=bone.bindLocal; editAngles_=DegreesFromQuaternion(edit_.rotation); CommitPose(); });
-    if (ImGui::Button("Delete key at this time",{-1,0})) {
-        DeleteTransformKey(Clip(),static_cast<uint32_t>(selectedBone_),time_*Clip().speed); dirty_=true; editBone_=-1;
-        pose_=EvaluatePose(model_.skeleton,&Clip(),time_); status_="Keys removed at the current time.";
-    }
-    ImGui::EndDisabled();
-    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing(); Label("PREVIEW");
-    ImGui::Checkbox("Floor grid",&options_.grid); ImGui::SameLine(); ImGui::Checkbox("Bones",&options_.skeleton);
-    ImGui::Checkbox("Wireframe",&options_.wireframe);
-    if (ImGui::Checkbox("Bind pose",&bindPose_)) { editBone_=-1; pose_=EvaluatePose(model_.skeleton,bindPose_?nullptr:&Clip(),time_); }
-    if (ImGui::Button("Frame character [F]",{-1,0})) renderer_.FitCamera(camera_);
-    ImGui::Spacing(); ImGui::Separator(); ImGui::Spacing();
-    if (ImGui::CollapsingHeader("Import settings")) {
-        const char* labels[]={"Automatic / x1","Extra scale / x0.01","Extra scale / x0.001"};
-        const float scales[]={1,.01f,.001f}; int choice=unitsToMeters_==1?0:unitsToMeters_==.01f?1:2;
-        ImGui::SetNextItemWidth(-1);
-        if (ImGui::Combo("##units",&choice,labels,3)) unitsToMeters_=scales[choice];
-        ImGui::TextWrapped("FBX units are converted to meters automatically. Extra scale is for files with incorrect unit metadata. Applies on the next import.");
-    }
-    if (ImGui::CollapsingHeader("Team handoff")) {
-        ImGui::TextWrapped("Save motion keeps editable keys. Bake 30 FPS writes final local poses for the FBX exporter.");
-        if (ImGui::Button("Save skeleton JSON",{-1,0})) Try([&] {
-            auto p=Dialog(true,L"Skeleton (*.json)\0*.json\0\0",L"json",L"skeleton.json");
-            if (!p.empty()) { SaveSkeleton(p,model_.skeleton); status_="Skeleton saved: "+p.u8string(); }
-        });
-        if (ImGui::Button("Save preview PNG",{-1,0})) Try([&] {
-            auto p=Dialog(true,L"Preview image (*.png)\0*.png\0\0",L"png",L"preview.png");
-            if (!p.empty()) { renderer_.SaveScreenshot(p); status_="Preview saved: "+p.u8string(); }
-        });
-    }
-    if (ImGui::CollapsingHeader("Asset details")) {
-        ImGui::TextWrapped("%s",model_.source.u8string().c_str());
-        size_t triangles=0; for (const auto& mesh:model_.meshes) triangles+=mesh.indices.size()/3;
-        ImGui::Text("%zu meshes / %zu triangles",model_.meshes.size(),triangles);
-        for (const auto& warning:model_.warnings) ImGui::TextWrapped("%s",warning.c_str());
-        for (const auto& warning:renderer_.Warnings()) ImGui::TextWrapped("%s",warning.c_str());
+void EditorApp::OpenProject() {Try([&]{
+    auto path=Dialog(false,L"LunaFlow project (*.lunaflow;*.json)\0*.lunaflow;*.json\0\0",L"lunaflow");if(path.empty())return;
+    auto document=std::make_shared<ProjectData>(LoadProject(path));RequestSceneChange([this,path,document]{auto& project=*document;UseModel(std::move(project.model));projectPath_=path;
+    for(size_t i=0;i<model_.clips.size();++i)if(model_.clips[i].id==project.selectedClipId)selectedClip_=static_cast<int>(i);
+    for(size_t i=0;i<model_.skeleton.bones.size();++i)if(model_.skeleton.bones[i].path==project.selectedBonePath)selectedBone_=static_cast<int>(i);
+    camera_.target=project.cameraTarget;camera_.yaw=project.cameraYaw;camera_.pitch=project.cameraPitch;camera_.distance=project.cameraDistance;
+    loop_=Clip().loop;SetTime(project.time);dirty_=false;status_=T("프로젝트를 복원했습니다.","Project restored.");});
+});}
+bool EditorApp::SaveCurrentProject(bool saveAs) {bool saved=false;Try([&]{
+    auto path=projectPath_;if(saveAs||path.empty())path=Dialog(true,L"LunaFlow project (*.lunaflow)\0*.lunaflow\0\0",L"lunaflow",L"Project.lunaflow");if(path.empty())return;
+    ProjectData project;project.model=model_;project.selectedClipId=Clip().id;project.selectedBonePath=model_.skeleton.bones[selectedBone_].path;project.time=time_;
+    project.cameraTarget=camera_.target;project.cameraYaw=camera_.yaw;project.cameraPitch=camera_.pitch;project.cameraDistance=camera_.distance;
+    SaveProject(path,project);projectPath_=path;dirty_=false;saved=true;status_=T("전체 프로젝트를 저장했습니다.","Entire project saved.");
+});return saved;}
+void EditorApp::RequestSceneChange(std::function<void()> action){if(dirty_)pendingSceneChange_=std::move(action);else Try(action);}
+void EditorApp::PendingChanges() {
+    if((closeRequested_||pendingSceneChange_)&&!dirty_){if(closeRequested_){quitRequested_=true;closeRequested_=false;}else {auto action=std::move(pendingSceneChange_);pendingSceneChange_={};Try(action);}return;}
+    if(closeRequested_||pendingSceneChange_)ImGui::OpenPopup("Unsaved###Unsaved");
+    if(ImGui::BeginPopupModal(T("저장하지 않은 변경###Unsaved","Unsaved changes###Unsaved"),nullptr,ImGuiWindowFlags_AlwaysAutoResize)){
+        ImGui::TextUnformatted(T("현재 프로젝트의 변경 내용을 저장할까요?","Save changes to the current project?"));
+        auto proceed=[&]{if(closeRequested_)quitRequested_=true;else{auto action=std::move(pendingSceneChange_);pendingSceneChange_={};Try(action);}closeRequested_=false;ImGui::CloseCurrentPopup();};
+        if(ImGui::Button(T("저장","Save"),{100,0})){if(SaveCurrentProject())proceed();}ImGui::SameLine();
+        if(ImGui::Button(T("저장하지 않음","Discard"),{130,0}))proceed();ImGui::SameLine();
+        if(ImGui::Button(T("취소","Cancel"),{100,0})){closeRequested_=false;pendingSceneChange_={};ImGui::CloseCurrentPopup();}ImGui::EndPopup();
     }
 }
-void EditorApp::Viewport(float height) {
-    ImGui::BeginChild("viewport-card",{0,height},ImGuiChildFlags_None,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
-    Label("SCENE PREVIEW"); ImGui::SameLine(); ImGui::TextDisabled(" / %s",bindPose_?"Bind pose":Clip().name.c_str());
-    ImVec2 size=ImGui::GetContentRegionAvail(); size.x=std::max(size.x,1.0f); size.y=std::max(size.y,1.0f);
-    renderer_.Resize(static_cast<unsigned>(size.x),static_cast<unsigned>(size.y));
-    ImGui::Image(ImTextureRef(static_cast<ImTextureID>(reinterpret_cast<uintptr_t>(renderer_.Texture()))),size);
-    const bool hover=ImGui::IsItemHovered(); const auto& io=ImGui::GetIO();
-    if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) orbiting_=true;
-    if (hover && (ImGui::IsMouseClicked(ImGuiMouseButton_Middle)||ImGui::IsMouseClicked(ImGuiMouseButton_Right))) panning_=true;
-    if (!io.MouseDown[ImGuiMouseButton_Left]) orbiting_=false;
-    if (!io.MouseDown[ImGuiMouseButton_Middle]&&!io.MouseDown[ImGuiMouseButton_Right]) panning_=false;
-    if (orbiting_) camera_.Orbit(io.MouseDelta.x,io.MouseDelta.y);
-    if (panning_) camera_.Pan(io.MouseDelta.x,io.MouseDelta.y,size.y);
-    if (hover) { camera_.Zoom(io.MouseWheel); if (ImGui::IsKeyPressed(ImGuiKey_F) && !io.WantTextInput) renderer_.FitCamera(camera_); }
-    options_.selectedBone=selectedBone_; renderer_.Render(model_,pose_,camera_,options_);
-    auto* draw=ImGui::GetWindowDrawList(); const auto min=ImGui::GetItemRectMin(); const auto max=ImGui::GetItemRectMax();
-    draw->AddRectFilled({min.x+12,min.y+12},{min.x+105,min.y+39},IM_COL32(34,38,57,230),6);
-    draw->AddText({min.x+23,min.y+17},IM_COL32(144,231,207,255),"PERSPECTIVE");
-    draw->AddText({min.x+16,max.y-27},IM_COL32(142,153,179,255),"Drag: orbit    Right drag: pan    Wheel: zoom");
-    ImGui::EndChild();
+void EditorApp::SetTime(double t) {
+    time_=std::clamp(t,0.0,PlaybackDuration(Clip()));playing_=false;editBone_=-1;
+    pose_=EvaluatePose(model_.skeleton,bindPose_?nullptr:&Clip(),time_);
 }
-void EditorApp::Timeline(float height) {
-    ImGui::BeginChild("timeline-card",{0,height},ImGuiChildFlags_None,ImGuiWindowFlags_NoScrollbar);
-    Label("TIMELINE"); ImGui::SameLine(); ImGui::TextDisabled(" / selected bone keys");
-    if (ImGui::Button(playing_?"Pause":"Play",{75,0})) playing_=!playing_;
-    ImGui::SameLine(); if (ImGui::Button("|<")) { time_=0; playing_=false; }
-    ImGui::SameLine(); ImGui::Checkbox("Loop",&loop_);
-    ImGui::SameLine(); ImGui::SetNextItemWidth(105); float speed=static_cast<float>(Clip().speed);
-    if (ImGui::DragFloat("Speed",&speed,.01f,.05f,8,"%.2fx",ImGuiSliderFlags_AlwaysClamp)) { Clip().speed=speed; time_=std::min(time_,PlaybackDuration(Clip())); dirty_=true; }
-    const double duration=PlaybackDuration(Clip());
-    ImGui::SameLine(); ImGui::TextColored(purple,"%.2f / %.2f s",time_,duration);
-    const ImVec2 p=ImGui::GetCursorScreenPos(); const float width=std::max(ImGui::GetContentRegionAvail().x,1.0f),trackHeight=53;
-    ImGui::InvisibleButton("time-track",{width,trackHeight});
-    if (ImGui::IsItemActive()) { time_=std::clamp(static_cast<double>((ImGui::GetIO().MousePos.x-p.x)/width)*duration,0.0,duration); playing_=false; }
-    auto* draw=ImGui::GetWindowDrawList(); draw->AddRectFilled(p,{p.x+width,p.y+trackHeight},IM_COL32(20,25,36,255),5);
-    for (int i=0;i<=8;++i) {
-        const float x=p.x+width*i/8.0f;
-        draw->AddLine({x,p.y+19},{x,p.y+trackHeight},IM_COL32(52,59,78,255));
-        char label[32]; std::snprintf(label,sizeof(label),"%.1f",duration*i/8);
-        draw->AddText({std::min(x+3,p.x+width-28),p.y+2},IM_COL32(124,137,163,255),label);
-    }
-    if (duration>0) for (const auto& track:Clip().tracks) if (track.bone==static_cast<uint32_t>(selectedBone_)) {
-        auto diamonds=[&](const auto& keys) {
-            for (const auto& key:keys) {
-                const float x=p.x+width*static_cast<float>(key.time/Clip().duration),y=p.y+35;
-                draw->AddQuadFilled({x,y-4},{x+4,y},{x,y+4},{x-4,y},IM_COL32(172,133,238,255));
-            }
-        };
-        diamonds(track.positions); diamonds(track.rotations); diamonds(track.scales);
-    }
-    const float headX=p.x+width*static_cast<float>(duration>0?time_/duration:0);
-    draw->AddLine({headX,p.y},{headX,p.y+trackHeight},IM_COL32(139,235,209,255),2);
-    draw->AddTriangleFilled({headX-5,p.y},{headX+5,p.y},{headX,p.y+7},IM_COL32(139,235,209,255));
-    ImGui::SetNextItemWidth(-1); float t=static_cast<float>(time_);
-    if (ImGui::SliderFloat("##time-seconds",&t,0,static_cast<float>(duration),"%.3f seconds")) { time_=t; playing_=false; }
-    ImGui::EndChild();
+void EditorApp::FrameAll() {Try([&]{pose_=EvaluatePose(model_.skeleton,bindPose_?nullptr:&Clip(),time_);renderer_.UpdateBounds(model_,pose_);renderer_.FitCamera(camera_);});}
+void EditorApp::CommitPose(bool updateQuaternion) {
+    if(updateQuaternion)edit_.rotation=QuaternionFromDegrees(editAngles_);
+    const int object=ObjectForBone(model_,static_cast<uint32_t>(selectedBone_));
+    if(workspace_==0&&object>=0&&model_.objects[object].root==static_cast<uint32_t>(selectedBone_)){
+        const auto current=EvaluatePose(model_.skeleton,&Clip(),time_).local[selectedBone_];
+        const auto base=Decompose(Matrix(model_.skeleton.bones[selectedBone_].bindLocal)*XMMatrixInverse(nullptr,Matrix(current))*Matrix(edit_));SetObjectTransform(model_,static_cast<uint32_t>(selectedBone_),base);
+    }else SetTransformKey(Clip(),static_cast<uint32_t>(selectedBone_),std::clamp(time_*Clip().speed,0.0,Clip().duration),edit_);
+    dirty_=true;pose_=EvaluatePose(model_.skeleton,&Clip(),time_);error_=false;
+    status_=T("현재 프레임에 키프레임이 기록되었습니다.","Keyframe recorded at the current frame.");
 }
 void EditorApp::Frame(float deltaTime) {
-    if (playing_ && !bindPose_) {
-        const double duration=PlaybackDuration(Clip()); time_+=std::min(deltaTime,.25f);
-        if (duration>0 && loop_) time_=std::fmod(time_,duration);
-        else if (time_>=duration) { time_=duration; playing_=false; }
+    const auto selectedId=Clip().id;bool agentChanged=false;auto agentMessages=agent_.Drain(model_,&agentChanged);
+    if(!agentMessages.empty()){
+        selectedClip_=std::min(selectedClip_,static_cast<int>(model_.clips.size()-1));
+        for(size_t i=0;i<model_.clips.size();++i)if(model_.clips[i].id==selectedId)selectedClip_=static_cast<int>(i);
+        for(auto& message:agentMessages)messages_.push_back({false,std::move(message),{}});
+        if(agentChanged)dirty_=true;chatScroll_=true;editClip_=-1;time_=std::min(time_,PlaybackDuration(Clip()));
     }
+    if(playing_&&!bindPose_){const double duration=PlaybackDuration(Clip());time_+=std::min(deltaTime,.25f);if(duration>0&&loop_)time_=std::fmod(time_,duration);else if(time_>=duration){time_=duration;playing_=false;}}
     auto& io=ImGui::GetIO();
-    if (!io.WantTextInput && ImGui::IsKeyPressed(ImGuiKey_Space)) playing_=!playing_;
-    const auto* viewport=ImGui::GetMainViewport();
-    ImGui::SetNextWindowPos(viewport->WorkPos); ImGui::SetNextWindowSize(viewport->WorkSize);
-    ImGui::Begin("LunaFlow",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_NoBringToFrontOnFocus);
-    Toolbar();
-    const float workHeight=std::max(ImGui::GetContentRegionAvail().y-40,250.0f);
-    if (ImGui::BeginTable("workspace",3,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp)) {
-        ImGui::TableSetupColumn("Library",ImGuiTableColumnFlags_WidthFixed,220);
-        ImGui::TableSetupColumn("Preview",ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableSetupColumn("Inspector",ImGuiTableColumnFlags_WidthFixed,270);
+    if(!io.WantTextInput&&!ImGui::IsPopupOpen(nullptr,ImGuiPopupFlags_AnyPopupId)){
+        if(ImGui::IsKeyPressed(ImGuiKey_Space))playing_=!playing_;
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_S))SaveCurrentProject(io.KeyShift);
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_O))OpenProject();
+        if(io.KeyCtrl&&ImGui::IsKeyPressed(ImGuiKey_Z))Undo();
+    }
+    const auto* main=ImGui::GetMainViewport();ImGui::SetNextWindowPos(main->WorkPos);ImGui::SetNextWindowSize(main->WorkSize);
+    ImGui::Begin("LunaFlow",nullptr,ImGuiWindowFlags_NoDecoration|ImGuiWindowFlags_NoMove|ImGuiWindowFlags_NoSavedSettings|ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoBringToFrontOnFocus|ImGuiWindowFlags_NoScrollWithMouse);
+    ImGui::SetScrollY(0);
+    MenuBar();Workspaces();
+    const float height=std::max(ImGui::GetContentRegionAvail().y-48,250.0f);
+    if(ImGui::BeginTable("workspace",3,ImGuiTableFlags_Resizable|ImGuiTableFlags_BordersInnerV|ImGuiTableFlags_SizingStretchProp)){
+        ImGui::TableSetupColumn("Library",ImGuiTableColumnFlags_WidthFixed,230);
+        ImGui::TableSetupColumn("Viewport",ImGuiTableColumnFlags_WidthStretch);
+        ImGui::TableSetupColumn("Properties",ImGuiTableColumnFlags_WidthFixed,330);
         ImGui::TableNextRow();
-        ImGui::TableSetColumnIndex(0); ImGui::BeginChild("library-card",{0,workHeight}); Library(); ImGui::EndChild();
-        // Update after library selection and before inspector edits, then draw the same pose.
-        pose_=EvaluatePose(model_.skeleton,bindPose_?nullptr:&Clip(),time_,false);
-        ImGui::TableSetColumnIndex(2); ImGui::BeginChild("inspector-card",{0,workHeight}); Inspector(); ImGui::EndChild();
-        ImGui::TableSetColumnIndex(1); Viewport(std::max(workHeight-204,100.0f)); ImGui::Spacing(); Timeline(190);
+        ImGui::TableSetColumnIndex(0);ImGui::BeginChild("library",{0,height});Library();ImGui::EndChild();
+        pose_=EvaluatePose(model_.skeleton,bindPose_?nullptr:&Clip(),time_);
+        ImGui::TableSetColumnIndex(2);
+        const float desiredInspector=workspace_==2||selectedEffect_>=0?250.0f:model_.objects.size()>1?290.0f:190.0f;
+        const float inspectorHeight=showInspector_?(showChat_?std::min(desiredInspector,height*.52f):height):0;
+        if(showInspector_){ImGui::BeginChild("inspector",{0,inspectorHeight});Inspector();ImGui::EndChild();}
+        if(showChat_){if(showInspector_)ImGui::Spacing();Chat(std::max(height-inspectorHeight-(showInspector_?8:0),100.0f));}
+        ImGui::TableSetColumnIndex(1);const float timelineHeight=workspace_==1?175.0f:130.0f;
+        Viewport(std::max(height-timelineHeight-8,100.0f));ImGui::Spacing();Timeline(timelineHeight);
         ImGui::EndTable();
     }
-    ImGui::Spacing(); ImGui::Separator();
-    ImGui::TextColored(error_?ImVec4{1,.48f,.47f,1}:muted,"%s%s",dirty_?"[Unsaved] ":"",status_.c_str());
-    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s",status_.c_str());
-    ImGui::End();
+    ImGui::Separator();
+    const float fpsWidth=settings_.showFps?190.0f:0;
+    ImGui::BeginChild("status",{std::max(ImGui::GetContentRegionAvail().x-fpsWidth,1.0f),22},0,ImGuiWindowFlags_NoScrollbar);
+    const char* ready=T("준비됨","Ready");
+    ImGui::TextColored(error_?ImVec4{1,.48f,.47f,1}:ImVec4{.51f,.57f,.67f,1},"%s%s",dirty_?T("● 저장 안 됨  ","* Unsaved  "):"",status_.empty()?ready:status_.c_str());
+    if(ImGui::IsItemHovered())ImGui::SetTooltip("%s",status_.empty()?ready:status_.c_str());ImGui::EndChild();
+    if(settings_.showFps){ImGui::SameLine();ImGui::TextDisabled("%.0f FPS  |  %.1f ms",io.Framerate,1000.0f/std::max(io.Framerate,1.0f));}
+    Settings();PendingChanges();ImGui::End();
 }
 }

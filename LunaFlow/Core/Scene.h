@@ -31,12 +31,15 @@ struct AnimationClip {
     double duration = 0; // Source seconds; playback speed is applied by the evaluator.
     double speed = 1;
     std::vector<BoneTrack> tracks;
+    uint64_t revision = 0;
+    bool loop = true;
 };
 struct Vertex {
     XMFLOAT3 position{}, normal{};
     XMFLOAT2 uv{};
     std::array<uint32_t, 4> joints{}; // Mesh-local skin palette indices.
     std::array<float, 4> weights{};
+    XMFLOAT4 color{1,1,1,1};
 };
 struct SkinBinding { uint32_t bone = 0; XMFLOAT4X4 inverseBind{}; };
 struct Material {
@@ -54,6 +57,20 @@ struct MeshData {
     std::vector<SkinBinding> skin;
     uint32_t material = 0;
 };
+struct SceneObject {
+    std::string id,name;
+    uint32_t root=0;
+};
+enum class EffectType { Trail, Sparks, Aura };
+struct EffectData {
+    std::string id,name,clipId;
+    EffectType type=EffectType::Trail;
+    uint32_t bone=0;
+    Transform local;
+    XMFLOAT4 color{.58f,.42f,1,1};
+    float size=.5f,intensity=1;
+    double start=0,end=3;
+};
 struct ModelAsset {
     std::filesystem::path source;
     SkeletonData skeleton;
@@ -61,6 +78,8 @@ struct ModelAsset {
     std::vector<MeshData> meshes;
     std::vector<AnimationClip> clips;
     std::vector<std::string> warnings;
+    std::vector<SceneObject> objects;
+    std::vector<EffectData> effects;
 };
 struct Pose { std::vector<Transform> local; std::vector<XMFLOAT4X4> global; };
 struct BakedFrame { double time = 0; std::vector<Transform> local; };

@@ -1,4 +1,8 @@
 ## Misc artifacts
+.archive/
+agent_service/output/
+__pycache__/
+*.pyc
 .DS_Store
 .claude
 .vscode

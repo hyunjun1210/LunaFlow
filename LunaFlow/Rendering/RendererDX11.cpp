@@ -69,8 +69,9 @@ void RendererDX11::Initialize(ID3D11Device* d,ID3D11DeviceContext* c,const std::
         {"NORMAL",0,DXGI_FORMAT_R32G32B32_FLOAT,0,static_cast<UINT>(offsetof(Vertex,normal)),D3D11_INPUT_PER_VERTEX_DATA,0},
         {"TEXCOORD",0,DXGI_FORMAT_R32G32_FLOAT,0,static_cast<UINT>(offsetof(Vertex,uv)),D3D11_INPUT_PER_VERTEX_DATA,0},
         {"BLENDINDICES",0,DXGI_FORMAT_R32G32B32A32_UINT,0,static_cast<UINT>(offsetof(Vertex,joints)),D3D11_INPUT_PER_VERTEX_DATA,0},
-        {"BLENDWEIGHT",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,static_cast<UINT>(offsetof(Vertex,weights)),D3D11_INPUT_PER_VERTEX_DATA,0}};
-    Check(d->CreateInputLayout(elements,5,vertex->GetBufferPointer(),vertex->GetBufferSize(),&layout_),"Create input layout");
+        {"BLENDWEIGHT",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,static_cast<UINT>(offsetof(Vertex,weights)),D3D11_INPUT_PER_VERTEX_DATA,0},
+        {"COLOR",0,DXGI_FORMAT_R32G32B32A32_FLOAT,0,static_cast<UINT>(offsetof(Vertex,color)),D3D11_INPUT_PER_VERTEX_DATA,0}};
+    Check(d->CreateInputLayout(elements,6,vertex->GetBufferPointer(),vertex->GetBufferSize(),&layout_),"Create input layout");
     D3D11_BUFFER_DESC cb{}; cb.ByteWidth=sizeof(Constants); cb.Usage=D3D11_USAGE_DEFAULT; cb.BindFlags=D3D11_BIND_CONSTANT_BUFFER;
     Check(d->CreateBuffer(&cb,nullptr,&constants_),"Create skin constant buffer");
     D3D11_RASTERIZER_DESC raster{}; raster.FillMode=D3D11_FILL_SOLID; raster.CullMode=D3D11_CULL_NONE; raster.DepthClipEnable=TRUE;
@@ -79,11 +80,16 @@ void RendererDX11::Initialize(ID3D11Device* d,ID3D11DeviceContext* c,const std::
     D3D11_DEPTH_STENCIL_DESC depth{}; depth.DepthEnable=TRUE; depth.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ALL; depth.DepthFunc=D3D11_COMPARISON_LESS_EQUAL;
     Check(d->CreateDepthStencilState(&depth,&depthState_),"Create depth state"); depth.DepthEnable=FALSE;
     Check(d->CreateDepthStencilState(&depth,&overlayState_),"Create skeleton overlay state");
+    depth.DepthEnable=TRUE;depth.DepthWriteMask=D3D11_DEPTH_WRITE_MASK_ZERO;
+    Check(d->CreateDepthStencilState(&depth,&effectDepthState_),"Create transparent effect depth state");
     D3D11_SAMPLER_DESC sample{}; sample.Filter=D3D11_FILTER_MIN_MAG_MIP_LINEAR;
     sample.AddressU=sample.AddressV=sample.AddressW=D3D11_TEXTURE_ADDRESS_WRAP; sample.MaxLOD=D3D11_FLOAT32_MAX;
     Check(d->CreateSamplerState(&sample,&sampler_),"Create sampler");
     D3D11_BLEND_DESC blend{}; blend.RenderTarget[0].RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
     Check(d->CreateBlendState(&blend,&blend_),"Create blend state");
+    auto& target=blend.RenderTarget[0];target.BlendEnable=TRUE;target.SrcBlend=D3D11_BLEND_SRC_ALPHA;target.DestBlend=D3D11_BLEND_ONE;target.BlendOp=D3D11_BLEND_OP_ADD;
+    target.SrcBlendAlpha=D3D11_BLEND_ONE;target.DestBlendAlpha=D3D11_BLEND_ZERO;target.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+    Check(d->CreateBlendState(&blend,&additive_),"Create effect blend state");
     const uint8_t white[4]={255,255,255,255}; white_=MakeTexture(d,white,1,1);
 }
 void RendererDX11::SetModel(const ModelAsset& model) {
@@ -113,7 +119,17 @@ void RendererDX11::SetModel(const ModelAsset& model) {
         try { textures.push_back(LoadTexture(device_.Get(),material)); }
         catch (const std::exception& e) { warnings.push_back(std::string("Texture fallback: ")+e.what()); textures.emplace_back(); }
     }
+    if (meshes.empty()) { minimum={-1,0,-1}; maximum={1,2,1}; }
     meshes_=std::move(meshes); textures_=std::move(textures); warnings_=std::move(warnings); boundsMin_=minimum; boundsMax_=maximum;
+}
+void RendererDX11::UpdateBounds(const ModelAsset& model,const Pose& pose) {
+    if(model.meshes.empty()){boundsMin_={-1,0,-1};boundsMax_={1,2,1};return;}
+    XMVECTOR minimum=XMVectorReplicate(FLT_MAX),maximum=XMVectorReplicate(-FLT_MAX);
+    for(const auto& mesh:model.meshes)for(const auto& vertex:mesh.vertices){
+        XMVECTOR point=XMVectorZero();
+        for(size_t i=0;i<4;++i)if(vertex.weights[i]>0){const auto& skin=mesh.skin.at(vertex.joints[i]);point+=XMVector3TransformCoord(XMLoadFloat3(&vertex.position),XMLoadFloat4x4(&skin.inverseBind)*XMLoadFloat4x4(&pose.global.at(skin.bone)))*vertex.weights[i];}
+        minimum=XMVectorMin(minimum,point);maximum=XMVectorMax(maximum,point);
+    }XMStoreFloat3(&boundsMin_,minimum);XMStoreFloat3(&boundsMax_,maximum);
 }
 void RendererDX11::FitCamera(PreviewCamera& camera) const {
     XMStoreFloat3(&camera.target,(XMLoadFloat3(&boundsMin_)+XMLoadFloat3(&boundsMax_))*.5f);
@@ -151,7 +167,7 @@ void RendererDX11::Draw(const MeshData& mesh,const GpuMesh& gpu,const Pose& pose
     context_->IASetIndexBuffer(gpu.indices.Get(),DXGI_FORMAT_R32_UINT,0); context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->DrawIndexed(gpu.count,0,0);
 }
-void RendererDX11::DrawLines(const std::vector<Vertex>& vertices,Constants& cb) {
+void RendererDX11::DrawLines(const std::vector<Vertex>& vertices,Constants& cb,D3D11_PRIMITIVE_TOPOLOGY topology) {
     if (vertices.empty()) return;
     if (vertices.size()>lineCapacity_) {
         lineCapacity_=vertices.size()*2; lines_.Reset(); D3D11_BUFFER_DESC desc{};
@@ -163,7 +179,42 @@ void RendererDX11::DrawLines(const std::vector<Vertex>& vertices,Constants& cb) 
     cb.options={0,1,0,0}; XMStoreFloat4x4(&cb.skin[0],XMMatrixIdentity()); XMStoreFloat4x4(&cb.normal[0],XMMatrixIdentity());
     context_->UpdateSubresource(constants_.Get(),0,nullptr,&cb,0,0);
     UINT stride=sizeof(Vertex),offset=0; ID3D11Buffer* vb=lines_.Get(); context_->IASetVertexBuffers(0,1,&vb,&stride,&offset);
-    context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_LINELIST); context_->Draw(static_cast<UINT>(vertices.size()),0);
+    context_->IASetPrimitiveTopology(topology); context_->Draw(static_cast<UINT>(vertices.size()),0);
+}
+void RendererDX11::DrawEffects(const ModelAsset& model,const Pose& pose,const RenderOptions& options,Constants& cb) {
+    if(!options.showEffects)return;
+    context_->OMSetBlendState(additive_.Get(),nullptr,0xffffffff);context_->OMSetDepthStencilState(effectDepthState_.Get(),0);
+    for(const auto& effect:model.effects){
+        if(effect.bone>=pose.global.size()||options.time<effect.start||options.time>effect.end)continue;
+        if(!effect.clipId.empty()&&(!options.activeClip||effect.clipId!=options.activeClip->id))continue;
+        cb.color=effect.color;cb.color.x*=effect.intensity;cb.color.y*=effect.intensity;cb.color.z*=effect.intensity;cb.color.w*=.55f;
+        std::vector<Vertex> vertices;
+        auto add=[&](XMFLOAT3 p,float opacity=1){Vertex v;v.position=p;v.weights[0]=1;v.color.w=opacity;vertices.push_back(v);};
+        auto transform=[&](XMFLOAT3 local,const Pose& sample){XMFLOAT3 world;XMStoreFloat3(&world,XMVector3TransformCoord(XMLoadFloat3(&local),Matrix(effect.local)*XMLoadFloat4x4(&sample.global[effect.bone])));return world;};
+        const float time=static_cast<float>(options.time-effect.start);
+        if(effect.type==EffectType::Trail&&options.activeClip){
+            const double start=std::max(effect.start,options.time-.25);auto previous=EvaluatePose(model.skeleton,options.activeClip,start);
+            auto a=transform({0,0,0},previous),b=transform({0,effect.size,0},previous);
+            for(int i=1;i<=16;++i){auto sample=EvaluatePose(model.skeleton,options.activeClip,start+(options.time-start)*i/16);
+                const auto c=transform({0,0,0},sample),d=transform({0,effect.size,0},sample);const float older=static_cast<float>(i-1)/16,newer=static_cast<float>(i)/16;
+                add(a,older);add(b,older);add(d,newer);add(a,older);add(d,newer);add(c,newer);a=c;b=d;
+            }
+            DrawLines(vertices,cb,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        }else if(effect.type==EffectType::Sparks){
+            const auto emitter=transform({0,0,0},pose);
+            for(int i=0;i<24;++i){const float age=std::fmod(time+i*.037f,.65f),angle=i*2.399963f;
+                const XMFLOAT3 velocity{std::cos(angle)*effect.size,(1.5f+static_cast<float>(i%5)*.15f)*effect.size,std::sin(angle)*effect.size};
+                auto at=[&](float t){return XMFLOAT3{emitter.x+velocity.x*t,emitter.y+velocity.y*t-1.8f*t*t,emitter.z+velocity.z*t};};add(at(age));add(at(std::max(age-.035f,0.0f)));
+            }DrawLines(vertices,cb);
+        }else if(effect.type==EffectType::Aura){
+            const float radius=effect.size*(.9f+.1f*std::sin(time*5));
+            for(int axis=0;axis<3;++axis)for(int i=0;i<64;++i){
+                auto point=[&](float angle){const float c=std::cos(angle)*radius,s=std::sin(angle)*radius;return axis==0?XMFLOAT3{0,c,s}:axis==1?XMFLOAT3{c,0,s}:XMFLOAT3{c,s,0};};
+                add(transform(point(i*XM_2PI/64),pose));add(transform(point((i+1)*XM_2PI/64),pose));
+            }DrawLines(vertices,cb);
+        }
+    }
+    context_->OMSetBlendState(blend_.Get(),nullptr,0xffffffff);
 }
 void RendererDX11::Render(const ModelAsset& model,const Pose& pose,const PreviewCamera& camera,const RenderOptions& options) {
     if (!width_ || !height_) return;
@@ -187,8 +238,9 @@ void RendererDX11::Render(const ModelAsset& model,const Pose& pose,const Preview
     context_->RSSetState(solid_.Get());
     if (options.grid) {
         std::vector<Vertex> lines; const float step=camera.sceneRadius*.2f, extent=step*20;
-        const float y=boundsMin_.y-.002f*camera.sceneRadius;
-        for (int i=-20;i<=20;++i) { const float f=i*step; line(lines,{-extent,y,f},{extent,y,f}); line(lines,{f,y,-extent},{f,y,extent}); }
+        const float y=-.002f*camera.sceneRadius;
+        const float centerX=std::floor(camera.target.x/step)*step,centerZ=std::floor(camera.target.z/step)*step;
+        for (int i=-20;i<=20;++i) { const float f=i*step; line(lines,{centerX-extent,y,centerZ+f},{centerX+extent,y,centerZ+f}); line(lines,{centerX+f,y,centerZ-extent},{centerX+f,y,centerZ+extent}); }
         cb.color={.14f,.18f,.24f,1}; DrawLines(lines,cb);
         lines.clear(); line(lines,{-extent,y,0},{extent,y,0}); cb.color={.40f,.20f,.27f,1}; DrawLines(lines,cb);
         lines.clear(); line(lines,{0,y,-extent},{0,y,extent}); cb.color={.20f,.36f,.39f,1}; DrawLines(lines,cb);
@@ -208,6 +260,7 @@ void RendererDX11::Render(const ModelAsset& model,const Pose& pose,const Preview
         }
         cb.color={.34f,.92f,.76f,1}; DrawLines(lines,cb); cb.color={1,.73f,.32f,1}; DrawLines(selected,cb);
     }
+    DrawEffects(model,pose,options,cb);
     context_->PSSetShaderResources(0,1,&empty);
     context_->OMSetRenderTargets(0,nullptr,nullptr);
 }

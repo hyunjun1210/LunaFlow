@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <LangVersion>latest</LangVersion>
+    <NuGetAudit>false</NuGetAudit>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../unity_tools/Runtime/*.cs" />
+    <Compile Include="../../unity_tools/Editor/*.cs" />
+    <Reference Include="$(UnityManaged)\UnityEngine\*.dll"><Private>false</Private></Reference>
+  </ItemGroup>
+</Project>

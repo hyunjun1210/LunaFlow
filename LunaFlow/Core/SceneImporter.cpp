@@ -195,6 +195,6 @@ ModelAsset ImportScene(const std::filesystem::path& path, float unitsToMeters) {
         out.clips.push_back(std::move(clip));
     }
     if (out.clips.empty()) out.clips.push_back({"bind-pose","Bind pose",2,1,{}});
-    return out;
+    out.objects.push_back({"imported-character",path.stem().u8string(),0});return out;
 }
 }

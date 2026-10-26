@@ -1,189 +1,153 @@
-# LunaFlow · A 담당 / DirectX 11
+# LunaFlow — Motion & VFX Studio
 
-계획서의 A1–A8을 구현한 Windows용 렌더링·애니메이션 작업 프로젝트다.
-기존 `examples/example_win32_directx11` 예제와 별도로, 같은 ImGui 소스와 DX11 백엔드를 사용한다.
+Windows / DirectX 11 기반 캐릭터 애니메이션 편집기.
 
-## 바로 실행하기
+## 실행과 프로젝트
 
-저장소 최상위의 **`Start-LunaFlow.cmd`** 를 더블클릭한다.
-이미 빌드한 경우 `build/Release/LunaFlow.exe`를 직접 실행해도 된다.
-기본 Luna 캐릭터와 Wave·Idle·Walk 동작이 내장되어 있어 FBX 없이 시작할 수 있다.
+- **실행:** 최상위 `Start-LunaFlow.cmd` 더블클릭
+- **Visual Studio:** `build/LunaFlow.slnx` 열기
+- **실행 파일:** `build/Release/LunaFlow.exe`
+- **전체 프로젝트:** `파일 > 프로젝트 저장` 또는 `Ctrl+S`
+- **복원:** `파일 > 프로젝트 열기` 또는 `Ctrl+O`
 
-1. `Pause`로 정지하고, 가운데 타임라인을 눌러 시간을 고른다.
-2. 왼쪽에서 `RightUpperArm` 같은 뼈를 선택한다.
-3. 오른쪽 `Rotation` 숫자를 드래그한다. 현재 시각에 키가 기록되고 즉시 반영된다.
-4. `Save motion`으로 **현재 선택한 동작 하나**를 JSON에 저장한다.
-5. `Import motion`으로 저장한 키나 C가 만든 같은 뼈대의 동작을 다시 불러온다.
-6. `Bake 30 FPS`로 수정과 재생 속도를 반영한 전체 로컬 자세를 내보낸다.
+프로젝트에는 장면의 메시·기본 재질·텍스처·뼈대·부착 관계·모든 동작·VFX·현재 선택과 카메라를 저장한다.
+새 장면이나 종료 시 저장하지 않은 작업이 있으면 저장·폐기·취소를 선택한다.
+현재 동작만 따로 저장하는 JSON과 전체 프로젝트 저장은 구분된다.
 
-`Open character`로 리깅된 FBX와 그 안의 애니메이션을 불러온다.
-glTF/GLB/OBJ도 지원한다. 텍스처가 별도 파일이면 원래 상대 경로를 유지한다.
-파일명과 폴더명에 한글을 사용할 수 있다.
+## 작업 공간
 
-## 카메라와 표시
+상단 `+`는 장면에 오브젝트나 VFX를 추가한다.
+파일·편집·보기·설정 메뉴 아래에 애니메이션·장면·VFX 작업 탭이 있다.
+작업 탭을 전환하면 애니메이션은 동작 목록, 장면은 계층, VFX는 효과 목록과 효과 속성이 열린다.
+왼쪽의 목록 탭은 작업 탭과 별도로 전환할 수 있다.
+
+- **왼쪽:** 화살표로 펼치고 접는 계층, 동작 관리, 자산 정보, 효과 목록
+- **가운데:** 3D 뷰포트와 이동·회전·크기 조절 핸들, 타임라인
+- **오른쪽:** 선택 대상의 속성, AI 대화 UI
+- **하단:** 저장 상태와 실제 측정 FPS
+
+바깥 작업 화면은 고정되어 있다. 계층·속성·대화 기록처럼 필요한 패널 안에서만 스크롤된다.
+폰트는 한국어·영문용 Pretendard Regular/SemiBold를 함께 제공한다.
+
+## 마우스와 단축키
 
 | 조작 | 기능 |
 |---|---|
-| 미리보기 왼쪽 드래그 | 캐릭터 주위를 회전 |
-| 오른쪽 / 가운데 드래그 | 화면 이동 |
+| 우클릭 드래그 | 카메라 회전 |
+| 빈 공간 좌클릭 / 가운데 드래그 | 화면 이동 |
+| 오브젝트 또는 뼈 좌클릭 | 선택 |
+| 선택 대상을 좌클릭 드래그 | 현재 도구에 따라 이동·회전·크기 변경 |
+| 축·평면·회전 링 드래그 | ImGuizmo 변환 핸들 |
+| Ctrl + 핸들 드래그 | 이동 0.1m / 회전 15도 / 크기 0.1 스냅 |
 | 휠 | 확대·축소 |
-| 미리보기 위에서 `F` | 캐릭터에 맞춰 다시 보기 |
-| `Space` | 재생·일시 정지 |
-| `Bones` | 뼈대 선과 선택 관절 표시 |
-| `Wireframe` | 삼각형 메시 표시 |
-| `Bind pose` | 원본 기준 자세 확인 |
-| `Cube` | 회전하는 DX11 큐브로 렌더링 기반 확인 |
+| W / E / R | 이동 / 회전 / 크기 도구 |
+| F | 전체 장면에 맞춰 보기 |
+| Space | 재생·정지 |
+| Ctrl+Z | 동작 키 편집 되돌리기 |
+| Ctrl+S / Ctrl+Shift+S | 프로젝트 저장 / 다른 이름으로 저장 |
 
-타임라인의 다이아몬드는 선택한 뼈의 키다. 클릭·드래그로 시간을 이동한다.
-재생 중에는 자세 입력이 잠긴다. 정지 후 편집한다.
-키를 수정하면 저장할 데이터 자체가 바뀌며, 미리보기만 잠깐 덮어쓰는 방식이 아니다.
-`+ Duplicate motion`으로 원본 동작을 복사한 뒤 수정할 수 있다.
-라이브러리는 메모리에 있으므로 필요한 동작은 각각 저장한 뒤 모델을 교체하거나 앱을 종료한다.
+장면 탭에서 표면을 선택하면 오브젝트 단위로 조작한다.
+장면의 배치는 모든 동작에 유지되고, 애니메이션 탭의 뼈 조작은 선택한 동작에 키로 기록된다.
+애니메이션 탭에서는 뼈를 직접 선택하고 현재 시각에 키를 기록한다.
+변환 핸들의 로컬/월드 기준도 전환할 수 있다.
 
-## Visual Studio에서 열기와 다시 빌드하기
+## 캐릭터와 소품
 
-필요 환경: Windows 10/11, Visual Studio의 **C++를 사용한 데스크톱 개발**, Windows SDK,
-**Windows용 C++ CMake 도구**. C++17과 DirectX 11을 사용한다.
-현재 PC에서는 Visual Studio 2026, x64, Release로 빌드했다.
+1. `파일 > 캐릭터 불러오기`로 리깅된 캐릭터 FBX를 연다.
+2. `+ > 모델 / 소품 가져오기`로 검 등 다른 모델을 같은 장면에 추가한다.
+3. 계층에서 검의 최상위 오브젝트를 선택한다.
+4. 속성의 **오브젝트 부착**에서 캐릭터의 RightHand 같은 뼈를 고른다.
+5. `선택한 뼈에 부착`을 누르고, 핸들이나 수치로 검의 방향·위치·크기를 조정한다.
+6. 손·팔에 키를 넣어 휘두르는 동작을 만든다. 검은 손 뼈를 따라 움직인다.
 
-빌드가 준비되어 있으므로 **`build/LunaFlow.slnx`** 를 Visual Studio로 연다.
-시작 프로젝트는 `LunaFlow`, 구성은 `Release / x64`다. `F5`로 실행한다.
-Visual Studio 2022에서 새로 구성하면 CMake가 해당 버전의 솔루션을 생성한다.
-최상위 폴더를 Visual Studio의 '폴더 열기'로 열어 CMake 프로젝트로 작업해도 된다.
+FBX·glTF·GLB·OBJ를 읽는다. 기본 색상과 diffuse/base-color 텍스처, 스킨 가중치를 지원한다.
+FBX 단위와 축은 내부의 미터·왼손 좌표계·Y-up으로 변환한다.
+파일의 잘못된 단위 정보를 보정할 추가 배율은 환경 설정에서 지정한다.
+FBX 내보내기는 노드 이름이 서로 달라야 한다. 추가한 소품의 충돌 이름은 자동으로 구분한다.
 
-최상위 폴더의 PowerShell에서:
+`+`에서 큐브·구·원기둥·원뿔·평면·토러스를 여러 개 추가할 수 있다.
+
+## 동작과 키프레임
+
+왼쪽 **동작** 탭에서 빈 동작 생성·선택·이름 변경·복제·삭제·길이 변경을 한다.
+복제는 독립적인 키와 새 ID를 가진다. 길이 변경은 전체 키 시간을 함께 변경한다.
+
+타임라인에서 원하는 시각으로 이동하고 뼈를 선택해 변환하면 그 시각에 키가 생긴다.
+재생·일시 정지와 처음/이전/다음/끝 이동은 텍스트 대신 아이콘을 사용한다.
+키 다이아몬드를 선택하고 `선택 키 편집` 또는 더블클릭으로 키 시간을 바꾸거나 삭제한다.
+같은 시간으로 옮기면 기존 키를 교체한다.
+처음으로 이동, 한 프레임 앞/뒤, 반복, 재생·정지를 제공한다.
+
+## VFX
+
+`+ > 칼 궤적 / 스파크 / 오라`로 효과를 만든다.
+상단 VFX를 선택하면 왼쪽 **효과 목록**과 오른쪽 **효과 속성**이 열린다.
+효과를 추가하면 VFX 작업 탭으로 이동한다. 효과를 선택하면 연결된 동작도 함께 선택한다.
+효과 속성과 뷰포트 핸들에서 다음을 바꿀 수 있다.
+
+- 부착할 뼈 또는 소품
+- 위치·회전·크기 핸들
+- 색상·강도·효과 크기
+- 선택 동작의 효과 시작·종료 시각
+
+칼 궤적은 부착점에서 로컬 +Y 방향으로 뻗는 날의 움직임을 기록한다.
+검의 원점과 날 방향에 맞춰 효과의 오프셋·방향·크기를 조절한다.
+효과는 전체 프로젝트에 저장된다.
+
+## 내보내기와 Unity
+
+`파일 > 내보내기`에서 다음을 선택한다.
+
+- **캐릭터 + 모든 동작 FBX:** 메시·기본 재질·텍스처·스킨·계층과 편집한 모든 동작을 여러 Take로 출력
+- **Unity 패키지:** FBX + 효과/동작 메타데이터 + Unity Runtime/Editor 스크립트
+- **최종 자세 JSON:** 다른 변환기에 전달할 전체 로컬 TRS 표본
+- **뼈대 JSON / 미리보기 PNG**
+
+Unity 패키지는 Unity 프로젝트의 **Assets/LunaFlow** 폴더에 `Scene.lunaflow.json`으로 저장한다.
+다른 곳에 내보냈다면 생성한 폴더 전체를 Assets/LunaFlow로 가져온다.
+스크립트는 Generic 리그의 여러 동작, Animator Controller, 프리팹을 구성한다.
+검의 부착은 FBX 계층으로, VFX는 별도 데이터와 런타임 메시·라인으로 전달하므로 VFX Graph 패키지는 필요 없다.
+자세한 설명은 [Unity 안내](../unity_tools/README.ko.md)에 있다.
+
+## 언어와 FPS
+
+`설정 > 환경 설정`에서 한국어/English를 고른다.
+화면 성능과 내보내기 샘플링은 별도 설정이다.
+
+- **화면 FPS:** VSync와 60·120·144·165·240·제한 없음 중 상한 설정. 실제 FPS를 상태 줄에 표시
+- **타임라인 격자:** 24·30·60·120·240FPS
+- **내보내기 샘플링:** 24·30·60·120·240FPS, 기본 60
+
+30FPS는 과거 기본 Bake 간격이었다. 화면 재생을 30FPS로 제한한 것이 아니다.
+VSync를 켜면 모니터 주사율의 영향을 받는다.
+
+## AI 대화
+
+현재 요청대로 **AI는 UI만 제공하며 외부 서비스에는 연결하지 않는다.**
+프롬프트와 요청 대상을 대화에 남긴다. 생성했다고 표시하거나 임의 동작을 만들지 않는다.
+
+추후 연결을 위한 `AgentBridge/AgentSession`은 요청 시 프로젝트 세션·클립 ID·revision·뼈대 서명을 고정한다.
+작업 스레드는 JSON 결과만 큐에 넣고, 편집 데이터 반영은 메인 스레드에서 수행한다.
+늦은 결과·다른 프로젝트·수정된 클립·바뀐 뼈대·중복 완료 응답을 검증한다.
+외부 AI 제공자 호출·Copilot 계정 설정·생성 리그 리타기팅은 서비스 연결 단계에서 확정한다.
+
+## 개발과 검증
+
+Visual Studio의 C++ 데스크톱 개발 도구, Windows SDK, CMake 도구가 필요하다.
+C++17을 사용하며 Assimp와 JSON 라이브러리는 초기 구성에서 고정 버전·해시로 가져온다.
 
 ```powershell
 .\Build-LunaFlow.ps1 -Configuration Release -Test
 .\Build-LunaFlow.ps1 -Run
 ```
 
-스크립트 실행이 제한된 PC에서 한 번 실행하는 방법:
+소스는 `LunaFlow`, 외부 라이브러리는 `third_party`, 생성 파일은 `build`에 있다.
+기존 ImGui 예제·개발 자료는 `.archive`에 보관했고 실행에 사용하지 않는다.
 
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Build-LunaFlow.ps1 -Test
-```
+데이터/그래픽 테스트는 보간·계층·키 편집·revision·프로젝트 복원·6종 도형·피킹·뼈 조작·검 부착·VFX·Unity 패키지·FBX 왕복을 확인한다.
+별도 UI 테스트는 실제 앱 코드를 화면에 창을 띄우지 않고 렌더링해 한국어/영어·여러 창 크기·루트 스크롤 회귀를 검사한다.
+Unity 6의 설치된 라이브러리를 참조한 C# 컴파일은 확인했다.
+현재 Unity 라이선스가 활성화되어 있지 않아 Unity Editor의 실제 가져오기·Play 모드 검증은 완료하지 못했다.
 
-초기 구성 때 Assimp 6.0.4와 nlohmann/json 3.12.0을 공식 저장소에서 내려받는다.
-버전과 SHA-256을 고정했으며, 이후에는 `build/_deps`의 파일을 재사용한다.
-Assimp, JSON, ImGui는 앱에 함께 링크된다. Assimp DLL을 따로 복사할 필요가 없다.
-다른 PC에 실행 파일을 전달할 때는 `Shaders`와 `licenses` 폴더도 함께 전달한다.
-Visual C++ 런타임이 없는 PC에는 Visual Studio의 해당 런타임도 필요하다.
-
-## A1–A8 구현 위치
-
-| 계획 | 구현 |
-|---|---|
-| A1 · 렌더링 기반, 큐브 | `App/main.cpp`, `Core/DemoScene.cpp`, `Rendering/RendererDX11.cpp` |
-| A2 · 패널 미리보기, 크기 변경, 카메라 | `RendererDX11`, `PreviewCamera`, `EditorApp::Viewport` |
-| A3 · FBX, 메시, 재질, 텍스처 | `Core/SceneImporter.cpp`, WIC 텍스처 로딩 |
-| A4 · 뼈 경로, 부모, 기준 자세, 가중치 | `Core/Scene.h`, `SceneImporter`, 뼈대 디버그 표시 |
-| A5 · 시간별 평가, 보간, 반복 | `Core/Animation.cpp`의 `EvaluatePose` |
-| A6 · GPU 스키닝 | `Rendering/Shaders/Skinned.hlsl`, 메시별 스킨 팔레트 |
-| A7 · 키 수정, 도↔쿼터니언, 저장 연결 | `SetTransformKey`, `DeleteTransformKey`, `EditorApp`, `ClipIO` |
-| A8 · 30FPS 최종 자세 출력 | `BakeClip`, `SaveBake` |
-
-## B·C와 연결하기
-
-공통 데이터와 함수는 `Core/Scene.h`에 있다. UI와 애니메이션 평가기는 서로 독립적이다.
-
-```cpp
-// B: 선택한 동작과 시간을 미리보기에 반영한다.
-Pose pose = EvaluatePose(model.skeleton, &model.clips[clipIndex], seconds, false);
-
-// B: UI에서 수정한 로컬 TRS를 원본 동작의 시간에 기록한다.
-Transform edited = pose.local[boneIndex];
-edited.rotation = QuaternionFromDegrees({20, 0, 80});
-SetTransformKey(clip, boneIndex, seconds * clip.speed, edited);
-
-// B: 패널 크기를 전달하고, SRV를 ImGui 이미지로 사용한다.
-renderer.Resize(width, height);
-renderer.Render(model, pose, camera, options);
-ID3D11ShaderResourceView* preview = renderer.Texture();
-
-// C: 동일한 캐릭터에 맞춘 동작을 추가한다.
-AnimationClip generated = LoadClip("generated.json", model.skeleton);
-model.clips.push_back(std::move(generated));
-
-// C: 미리보기와 같은 평가기로 최종 자세를 받는다.
-BakedClip finalPoses = BakeClip(model.skeleton, clip, 30);
-SaveBake("baked.json", model.skeleton, finalPoses);
-```
-
-`RendererDX11`는 전달받은 Device/Context를 참조하고 자체 자원만 관리한다.
-렌더링 뒤 출력 타깃을 해제한다. B의 프레임에서는 3D 장면을 먼저 그리고,
-메인 화면의 렌더 타깃을 다시 지정한 다음 ImGui를 그린다.
-미리보기 SRV는 다음 `Resize` 또는 렌더러 파괴 전까지 유효하다.
-Device/Context를 사용하는 함수와 앱의 모델 교체는 UI/렌더 스레드에서 호출한다.
-C의 네트워크 응답은 그 스레드로 전달한 뒤 적용한다.
-
-### 좌표와 시간 규칙
-
-- 내부는 **왼손 좌표계, +Y 위쪽, 미터**, DirectX 행 벡터다.
-- 로컬 행렬은 `S * R * T`, 계층은 `local * parentGlobal`이다.
-- Assimp 행렬은 가져올 때 한 번 전치한다. FBX의 축 메타데이터와 단위를 한 번 적용한다.
-- FBX 단위는 자동 변환된다. `Import settings`의 추가 배율은 잘못된 메타데이터 보정에만 쓴다.
-  OBJ는 단위 정보가 없으므로 원본 숫자를 미터로 해석한다.
-- 뼈 목록은 **전체 장면 노드**를 포함하며 부모가 자식보다 앞에 온다.
-  중간 변환 노드를 제거하지 않는다. 전체 `path`가 외부 동작의 식별자다.
-- 쿼터니언은 `[x, y, z, w]`다. Euler UI는 DirectX의 Pitch(X)·Yaw(Y)·Roll(Z) 순서다.
-- `clip.duration`과 키 시간은 **원본 동작의 초**다. 전달하는 `seconds`는 재생 시간이다.
-  재생 길이는 `duration / speed`이며, 평가기는 `seconds * speed`를 조회한다.
-- 위치·크기는 선형 보간, 회전은 정규화한 Slerp를 쓴다.
-  없는 채널은 해당 뼈의 원본 기준 자세를 쓴다.
-- 반복 재생은 `[0, 재생 길이)`다. 정지 화면과 Bake는 반복을 끄므로 끝 키를 보존한다.
-- 메시별 스킨은 `inverseBind * boneGlobal`, 정점당 상위 4개 가중치를 정규화한다.
-  메시 하나의 스킨 뼈는 최대 255개이며, 가중치 없는 정점은 메시 노드에 연결한다.
-
-### 동작 JSON: `lunaflow.clip`, 버전 1
-
-`Assets/TeamC_MotionExample.json`을 내장 Luna 모델에서 `Import motion`으로 열어 볼 수 있다.
-`positions`, `rotations`, `scales`는 생략할 수 있다. 제공한 채널은 시간 순서의 절대 로컬 값이다.
-
-```json
-{
-  "format": "lunaflow.clip", "version": 1,
-  "coordinates": {
-    "handedness": "left", "up": "+Y", "unit": "meter", "quaternion": "xyzw"
-  },
-  "id": "wave-001", "name": "Wave", "duration": 2.0, "speed": 1.0,
-  "tracks": [{
-    "bonePath": "/Root/Hips/Chest/RightUpperArm",
-    "rotations": [
-      {"time": 0.0, "value": [0, 0, 0, 1]},
-      {"time": 2.0, "value": [0, 0, 0.7071068, 0.7071068]}
-    ]
-  }]
-}
-```
-
-다른 캐릭터에서는 `Save skeleton JSON`으로 뼈 경로와 기준 TRS를 먼저 받는다.
-C가 생성 모델의 좌표·기준 자세·관절 이름을 이 뼈대로 리타기팅한 뒤 전달해야 한다.
-없는 뼈, 중복 트랙/키 시간, 유효하지 않은 쿼터니언, 길이 밖의 키, 다른 좌표 규칙은 오류로 반환한다.
-리타기팅 자체와 AI 서비스 호출은 C가 연결할 부분이다.
-
-### 최종 자세 JSON: `lunaflow.bake`, 버전 1
-
-`clipId`, `name`, 재생 속도를 반영한 `duration`, `fps`, `bones`, `frames`를 포함한다.
-각 프레임은 `{ "time": ..., "local": [ TRS, TRS, ... ] }`이며 배열 순서는 `bones`와 같다.
-TRS는 `translation[3]`, `rotation[4]`, `scale[3]`이다.
-0초, 1/30초 간격, **정확한 끝 시각**을 포함하며, 끝이 프레임 간격과 맞지 않으면 마지막 간격만 짧아진다.
-C는 이 좌표를 Blender/FBX 기준으로 변환하고 동일한 뼈 경로의 로컬 자세에 적용한다.
-원본 FBX와 기준 자세를 보존하고, 스킨 바인드를 새 기준 자세로 재생성하지 않는다.
-
-## 검증과 현재 범위
-
-`LunaFlowTests`는 보간·부모 계층·반복·끝 시각·속도 변경·키 수정·도/쿼터니언 변환,
-한글 경로 JSON 왕복·잘못된 입력 거부·Bake 일치를 검사한다.
-Assimp의 실제 FBX 샘플로 단위, 뼈, 가중치, 애니메이션을 검증하고,
-DirectX 11 WARP에서 셰이더를 실행해 자세 변경에 따라 이미지가 바뀌는지 검사한다.
-텍스처와 크기 변경, PNG 저장, 설치되어 있으면 DirectX 디버그 레이어 오류도 검사한다.
-이미지는 `build/test-output/`에 저장된다.
-
-확인한 것은 내장 캐릭터와 Assimp 테스트 모델이다. 팀원의 실제 캐릭터가 준비되면
-Blender에서 정면·기준 자세·기존 동작을 나란히 비교해 최종 확인해야 한다.
-
-현재 재질은 기본 색상·diffuse/base-color 텍스처·기본 조명이다.
-Windows WIC에서 읽는 PNG/JPEG 등의 텍스처를 지원하며, 실패하면 기본 색상을 사용한다.
-PBR 전체 재질, 모프 타깃, 제약조건/IK, Unity 확인, Blender 기반 FBX 작성,
-AI 호출과 자동 리타기팅, B의 전체 편집기/프로젝트 저장 기능은 이 A 모듈의 범위 밖이다.
+현재 재질은 기본 색상·텍스처·조명이다. 전체 PBR, 모프 타깃, DCC 제약조건/IK, 자동 리타기팅은 지원하지 않는다.
+상용 도구의 작업 흐름을 기준으로 개선한 구현이며, Blender·Unity 전체 기능과 동등한 완성도를 의미하지 않는다.
