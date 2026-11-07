@@ -729,6 +729,9 @@ namespace IMGUIZMO_NAMESPACE
       vec_t mRotationVectorSource;
       float mRotationAngle;
       float mRotationAngleOrigin;
+      bool mContinuousRotation = false;
+      float mRotationAccumulated = 0.f;
+      ImVec2 mRotationMouseFactor;
       //vec_t mWorldToLocalAxis;
 
       // scale
@@ -2452,7 +2455,7 @@ namespace IMGUIZMO_NAMESPACE
 
    static bool HandleScale(float* matrix, float* deltaMatrix, OPERATION op, MOVETYPE& type, const float* snap)
    {
-      if((!Intersects(op, SCALE) && !Intersects(op, SCALEU)) || type != MT_NONE || !gContext.mbMouseOver)
+      if((!Intersects(op, SCALE) && !Intersects(op, SCALEU)) || type != MT_NONE || (!gContext.mbMouseOver && !gContext.mbUsing))
       {
          return false;
       }
@@ -2576,7 +2579,7 @@ namespace IMGUIZMO_NAMESPACE
 
    static bool HandleRotation(float* matrix, float* deltaMatrix, OPERATION op, MOVETYPE& type, const float* snap)
    {
-      if(!Intersects(op, ROTATE) || type != MT_NONE || !gContext.mbMouseOver)
+      if(!Intersects(op, ROTATE) || type != MT_NONE || (!gContext.mbMouseOver && !gContext.mbUsing))
       {
         return false;
       }
@@ -2623,6 +2626,18 @@ namespace IMGUIZMO_NAMESPACE
             vec_t localPos = gContext.mRayOrigin + gContext.mRayVector * len - gContext.mModel.v.position;
             gContext.mRotationVectorSource = Normalized(localPos);
             gContext.mRotationAngleOrigin = ComputeAngleOnPlan();
+            gContext.mRotationAccumulated = 0.f;
+            if (gContext.mContinuousRotation)
+            {
+               const vec_t radial = gContext.mRotationVectorSource * gContext.mScreenFactor;
+               const vec_t tangent = Cross(gContext.mTranslationPlan, radial);
+               const ImVec2 start = worldToPos(gContext.mModel.v.position + radial, gContext.mViewProjection);
+               const ImVec2 end = worldToPos(gContext.mModel.v.position + radial + tangent * 0.01f, gContext.mViewProjection);
+               const ImVec2 delta = end - start;
+               const float squaredLength = ImLengthSqr(delta);
+               gContext.mRotationMouseFactor = squaredLength > 0.0001f ? delta * (0.01f / squaredLength) : ImVec2(0.01f, 0.f);
+               gContext.mRotationAngleOrigin = 0.f;
+            }
          }
       }
 
@@ -2634,7 +2649,14 @@ namespace IMGUIZMO_NAMESPACE
 #else
          ImGui::CaptureMouseFromApp();
 #endif
-         gContext.mRotationAngle = ComputeAngleOnPlan();
+         if (gContext.mContinuousRotation)
+         {
+            if (!io.MouseClicked[0] && io.MouseDown[0])
+               gContext.mRotationAccumulated += io.MouseDelta.x * gContext.mRotationMouseFactor.x + io.MouseDelta.y * gContext.mRotationMouseFactor.y;
+            gContext.mRotationAngle = gContext.mRotationAccumulated;
+         }
+         else
+            gContext.mRotationAngle = ComputeAngleOnPlan();
          if (snap)
          {
             float snapInRadian = snap[0] * DEG2RAD;
@@ -2892,6 +2914,10 @@ namespace IMGUIZMO_NAMESPACE
    void SetGizmoSizeClipSpace(float value)
    {
       gContext.mGizmoSizeClipSpace = value;
+   }
+   void SetContinuousRotation(bool enabled)
+   {
+      gContext.mContinuousRotation = enabled;
    }
 
    ///////////////////////////////////////////////////////////////////////////////////////////////////

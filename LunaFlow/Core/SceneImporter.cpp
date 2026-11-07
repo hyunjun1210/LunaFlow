@@ -5,6 +5,7 @@
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <functional>
 #include <stdexcept>
@@ -111,10 +112,13 @@ ModelAsset ImportScene(const std::filesystem::path& path, float unitsToMeters) {
             } else {
                 auto candidate = std::filesystem::u8path(texture.C_Str());
                 m.texturePath = candidate.is_absolute() ? candidate : path.parent_path() / candidate;
-                if (!std::filesystem::exists(m.texturePath)) {
+                if (!std::filesystem::is_regular_file(m.texturePath)) {
                     const auto nearby = path.parent_path() / candidate.filename();
-                    if (std::filesystem::exists(nearby)) m.texturePath = nearby;
-                    else out.warnings.push_back("Texture missing; using base color: " + m.texturePath.u8string());
+                    if (std::filesystem::is_regular_file(nearby)) m.texturePath = nearby;
+                    else {
+                        out.warnings.push_back("Texture missing for material '" + m.name + "'; using base color: " + m.texturePath.u8string());
+                        m.texturePath.clear();
+                    }
                 }
             }
         }
@@ -196,5 +200,59 @@ ModelAsset ImportScene(const std::filesystem::path& path, float unitsToMeters) {
     }
     if (out.clips.empty()) out.clips.push_back({"bind-pose","Bind pose",2,1,{}});
     out.objects.push_back({"imported-character",path.stem().u8string(),0});return out;
+}
+std::vector<std::string> RemoveReferenceImagePlanes(ModelAsset& model) {
+    if (model.meshes.size() < 2) return {};
+    const auto pose = EvaluatePose(model.skeleton, nullptr, 0);
+    struct Bounds { XMFLOAT3 lo{FLT_MAX,FLT_MAX,FLT_MAX}, hi{-FLT_MAX,-FLT_MAX,-FLT_MAX}; };
+    auto grow = [](Bounds& b, const XMFLOAT3& p) {
+        b.lo = {std::min(b.lo.x,p.x),std::min(b.lo.y,p.y),std::min(b.lo.z,p.z)};
+        b.hi = {std::max(b.hi.x,p.x),std::max(b.hi.y,p.y),std::max(b.hi.z,p.z)};
+    };
+    std::vector<Bounds> bounds(model.meshes.size());
+    for (size_t i = 0; i < model.meshes.size(); ++i) {
+        const auto& mesh = model.meshes[i];
+        for (const auto& vertex : mesh.vertices) {
+            XMVECTOR position = XMVectorZero(); float sum = 0;
+            for (size_t k = 0; k < vertex.weights.size(); ++k) {
+                if (vertex.weights[k] <= 0 || vertex.joints[k] >= mesh.skin.size()) continue;
+                const auto& binding = mesh.skin[vertex.joints[k]];
+                if (binding.bone >= pose.global.size()) continue;
+                position += XMVector3TransformCoord(XMLoadFloat3(&vertex.position), XMLoadFloat4x4(&binding.inverseBind) * XMLoadFloat4x4(&pose.global[binding.bone])) * vertex.weights[k];
+                sum += vertex.weights[k];
+            }
+            if (sum <= 0) continue;
+            XMFLOAT3 world; XMStoreFloat3(&world, position / sum); grow(bounds[i], world);
+        }
+    }
+    auto axis = [](const XMFLOAT3& v, int a) { return a == 0 ? v.x : a == 1 ? v.y : v.z; };
+    std::vector<bool> remove(model.meshes.size(), false);
+    for (size_t i = 0; i < model.meshes.size(); ++i) {
+        const auto& b = bounds[i];
+        if (model.meshes[i].vertices.size() > 256 || b.lo.x > b.hi.x) continue;
+        Bounds rest;
+        for (size_t j = 0; j < model.meshes.size(); ++j)
+            if (j != i && bounds[j].lo.x <= bounds[j].hi.x) { grow(rest, bounds[j].lo); grow(rest, bounds[j].hi); }
+        if (rest.lo.x > rest.hi.x) continue;
+        // A modeling reference card is a flat vertical sheet that stands fully behind, in front of,
+        // or beside the character and covers its whole silhouette on that sheet.
+        for (int thin : {0, 2}) {
+            const int a = thin == 0 ? 2 : 0;
+            const float span = std::max({axis(b.hi,0)-axis(b.lo,0),axis(b.hi,1)-axis(b.lo,1),axis(b.hi,2)-axis(b.lo,2)});
+            const float tolerance = std::max(span * .01f, 1e-5f);
+            if (axis(b.hi,thin) - axis(b.lo,thin) > span * 1e-3f) continue;
+            const float plane = (axis(b.hi,thin) + axis(b.lo,thin)) * .5f;
+            const bool outside = plane > axis(rest.hi,thin) + tolerance || plane < axis(rest.lo,thin) - tolerance;
+            const bool covers = axis(b.lo,a) <= axis(rest.lo,a) + tolerance && axis(b.hi,a) >= axis(rest.hi,a) - tolerance
+                && b.lo.y <= rest.lo.y + tolerance && b.hi.y >= rest.hi.y - tolerance;
+            if (outside && covers) { remove[i] = true; break; }
+        }
+    }
+    std::vector<std::string> removed; std::vector<MeshData> kept;
+    for (size_t i = 0; i < model.meshes.size(); ++i)
+        if (remove[i]) removed.push_back(model.meshes[i].name); else kept.push_back(std::move(model.meshes[i]));
+    if (kept.empty()) return {};
+    model.meshes = std::move(kept);
+    return removed;
 }
 }

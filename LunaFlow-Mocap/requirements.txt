@@ -1,0 +1,4 @@
+# Python 3.11 x64; isolated feature-local venv. No opencv-python alongside contrib.
+mediapipe==0.10.21
+opencv-contrib-python==4.11.0.86
+numpy==1.26.4

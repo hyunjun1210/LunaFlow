@@ -1,6 +1,7 @@
 #include "Core/UnityPackage.h"
 #include "Core/SceneExporter.h"
 #include "Core/Serialization.h"
+#include "Core/Particles.h"
 #include "Core/EditorCommands.h"
 #include <stdexcept>
 #include <windows.h>
@@ -18,7 +19,8 @@ void ExportUnityPackage(const std::filesystem::path& manifest,const ModelAsset& 
         data["effects"].push_back({{"id",e.id},{"name",e.name},{"type",static_cast<int>(e.type)},{"clipId",e.clipId},{"bonePath",model.skeleton.bones.at(e.bone).path},
             {"translation",{e.local.translation.x,e.local.translation.y,e.local.translation.z}},{"rotation",{e.local.rotation.x,e.local.rotation.y,e.local.rotation.z,e.local.rotation.w}},
             {"scale",{e.local.scale.x,e.local.scale.y,e.local.scale.z}},{"color",{e.color.x,e.color.y,e.color.z,e.color.w}},
-            {"size",e.size},{"intensity",e.intensity},{"start",e.start},{"end",e.end}});
+            {"size",e.size},{"intensity",e.intensity},{"start",e.start},{"end",e.end},{"disabled",!e.enabled},
+            {"particles",e.type==EffectType::Particles?EncodeParticles(e.particles):Json(nullptr)}});
     }
     // Copy the shared Unity integration once per package directory.
     for(const auto& sub:{"Runtime","Editor"}){

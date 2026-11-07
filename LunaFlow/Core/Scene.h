@@ -61,7 +61,19 @@ struct SceneObject {
     std::string id,name;
     uint32_t root=0;
 };
-enum class EffectType { Trail, Sparks, Aura };
+enum class EffectType { Trail, Sparks, Aura, Particles };
+enum class ParticleShape { Cone, Sphere, Box, Circle };
+struct ParticleSettings {
+    ParticleShape shape=ParticleShape::Cone;
+    float duration=2,rate=60,lifetime=1.2f,lifetimeRandomness=.25f;
+    float speed=1.5f,speedRandomness=.3f,gravity=0;
+    float radius=.15f,angle=25,startSize=.12f,endSize=.02f;
+    XMFLOAT3 box{1,1,1},velocity{0,0,0};
+    XMFLOAT4 endColor{1,.15f,.02f,0};
+    uint32_t seed=1;
+    int maxParticles=2048,burst=0;
+    bool loop=true,worldSpace=false,additive=true;
+};
 struct EffectData {
     std::string id,name,clipId;
     EffectType type=EffectType::Trail;
@@ -70,6 +82,9 @@ struct EffectData {
     XMFLOAT4 color{.58f,.42f,1,1};
     float size=.5f,intensity=1;
     double start=0,end=3;
+    ParticleSettings particles;
+    std::string sourcePrompt;
+    bool enabled=true;
 };
 struct ModelAsset {
     std::filesystem::path source;
@@ -95,6 +110,8 @@ void SetTransformKey(AnimationClip&, uint32_t bone, double sourceTime, const Tra
 void DeleteTransformKey(AnimationClip&, uint32_t bone, double sourceTime);
 BakedClip BakeClip(const SkeletonData&, const AnimationClip&, double fps = 30);
 ModelAsset ImportScene(const std::filesystem::path&, float unitsToMeters = 1.0f);
+// Drops flat vertical modeling-reference sheets that stand outside and fully behind a character.
+std::vector<std::string> RemoveReferenceImagePlanes(ModelAsset&);
 ModelAsset MakeDemoScene();
 ModelAsset MakeCubeScene();
 void SaveClip(const std::filesystem::path&, const SkeletonData&, const AnimationClip&);

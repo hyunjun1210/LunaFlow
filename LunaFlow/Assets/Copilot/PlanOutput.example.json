@@ -1,0 +1,27 @@
+{
+  "format": "lunaflow.edit.plan",
+  "version": 1,
+  "requestId": "test-request-1",
+  "sessionId": "test-session-1",
+  "summary": "인사 동작을 두 배 빠르게 바꾸고 선택한 손에 파란 불꽃을 추가하는 계획입니다.",
+  "needsClarification": false,
+  "question": "",
+  "steps": [
+    {
+      "stepId": "s1",
+      "operation": "retime_motion",
+      "targetRef": "selectedClip",
+      "resultRef": "fasterMotion",
+      "description": "선택한 3초 동작의 길이를 1.5초로 변경합니다.",
+      "argumentsJson": "{\"duration\":1.5}"
+    },
+    {
+      "stepId": "s2",
+      "operation": "create_particles",
+      "targetRef": "selectedBone",
+      "resultRef": "handFlame",
+      "description": "선택한 손에 연결할 파란 불꽃 파티클을 만듭니다.",
+      "argumentsJson": "{\"preset\":\"fire\",\"color\":{\"r\":0.12,\"g\":0.45,\"b\":1,\"a\":1},\"rate\":80,\"lifetime\":1.5}"
+    }
+  ]
+}

@@ -43,15 +43,16 @@ ModelAsset MakeDemoScene() {
     const auto hips=AddBone(a,"Hips",root,{0,1.03f,0});
     const auto chest=AddBone(a,"Chest",hips,{0,.43f,0});
     const auto head=AddBone(a,"Head",chest,{0,.43f,0});
-    const auto left=AddBone(a,"LeftUpperArm",chest,{-.39f,.06f,0});
+    // Luna faces -Z (visor side) in left-handed space, so her right side is -X.
+    const auto left=AddBone(a,"LeftUpperArm",chest,{.39f,.06f,0});
     const auto leftFore=AddBone(a,"LeftForeArm",left,{0,-.36f,0});
     const auto leftHand=AddBone(a,"LeftHand",leftFore,{0,-.30f,0});
-    const auto right=AddBone(a,"RightUpperArm",chest,{.39f,.06f,0});
+    const auto right=AddBone(a,"RightUpperArm",chest,{-.39f,.06f,0});
     const auto rightFore=AddBone(a,"RightForeArm",right,{0,-.36f,0});
     const auto rightHand=AddBone(a,"RightHand",rightFore,{0,-.30f,0});
-    const auto leftLeg=AddBone(a,"LeftUpperLeg",hips,{-.18f,-.13f,0});
+    const auto leftLeg=AddBone(a,"LeftUpperLeg",hips,{.18f,-.13f,0});
     const auto leftShin=AddBone(a,"LeftLowerLeg",leftLeg,{0,-.40f,0});
-    const auto rightLeg=AddBone(a,"RightUpperLeg",hips,{.18f,-.13f,0});
+    const auto rightLeg=AddBone(a,"RightUpperLeg",hips,{-.18f,-.13f,0});
     const auto rightShin=AddBone(a,"RightLowerLeg",rightLeg,{0,-.40f,0});
     const Pose bind=EvaluatePose(a.skeleton,nullptr,0);
     Box(a,bind,hips,{0,0,0},{.51f,.25f,.30f},2);
@@ -76,7 +77,7 @@ ModelAsset MakeDemoScene() {
         chestPose.rotation=QuaternionFromDegrees({std::sin(phase)*2,0,0});
         SetTransformKey(idle,chest,t,chestPose);
         const float ease=std::sin(static_cast<float>(t/3)*XM_PI);
-        Transform arm=a.skeleton.bones[right].bindLocal; arm.rotation=QuaternionFromDegrees({0,0,145*ease});
+        Transform arm=a.skeleton.bones[right].bindLocal; arm.rotation=QuaternionFromDegrees({0,0,-145*ease});
         SetTransformKey(wave,right,t,arm);
         Transform fore=a.skeleton.bones[rightFore].bindLocal;
         fore.rotation=QuaternionFromDegrees({0,0,std::sin(phase*3)*28*ease});

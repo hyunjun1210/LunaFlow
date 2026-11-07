@@ -26,13 +26,17 @@ FetchContent_Declare(json URL https://github.com/nlohmann/json/releases/download
 FetchContent_MakeAvailable(assimp json)
 
 add_library(lunaflow_core
+  LunaFlow/Core/MotionRetarget.cpp LunaFlow/Core/MotionRetarget.h
+  LunaFlow/Core/AutoRig.cpp LunaFlow/Core/AutoRig.h
+  LunaFlow/Core/Particles.cpp LunaFlow/Core/Particles.h
   LunaFlow/Core/Animation.cpp LunaFlow/Core/SceneImporter.cpp LunaFlow/Core/ClipIO.cpp
   LunaFlow/Core/DemoScene.cpp LunaFlow/Core/Scene.h LunaFlow/Core/Primitives.cpp LunaFlow/Core/Primitives.h
   LunaFlow/Rendering/ViewportInteraction.cpp LunaFlow/Rendering/ViewportInteraction.h
   LunaFlow/App/EditorSettings.cpp LunaFlow/App/EditorSettings.h LunaFlow/Core/EditorCommands.cpp LunaFlow/Core/EditorCommands.h
   LunaFlow/Core/ProjectIO.cpp LunaFlow/Core/ProjectIO.h LunaFlow/Core/Serialization.h
   LunaFlow/Core/SceneExporter.cpp LunaFlow/Core/SceneExporter.h LunaFlow/Core/SceneAssembly.cpp LunaFlow/Core/SceneAssembly.h
-  LunaFlow/Core/UnityPackage.cpp LunaFlow/Core/UnityPackage.h LunaFlow/AgentBridge/AgentSession.cpp LunaFlow/AgentBridge/AgentSession.h)
+  LunaFlow/Core/UnityPackage.cpp LunaFlow/Core/UnityPackage.h LunaFlow/AgentBridge/AgentSession.cpp LunaFlow/AgentBridge/AgentSession.h
+  LunaFlow/AgentBridge/EditPlan.cpp LunaFlow/AgentBridge/EditPlan.h LunaFlow/AgentBridge/CopilotProcess.cpp LunaFlow/AgentBridge/CopilotProcess.h)
 target_include_directories(lunaflow_core PUBLIC LunaFlow)
 target_link_libraries(lunaflow_core PUBLIC assimp::assimp nlohmann_json::nlohmann_json windowscodecs ole32)
 target_compile_definitions(lunaflow_core PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE)
@@ -52,9 +56,10 @@ target_link_libraries(lunaflow_gizmo PUBLIC lunaflow_imgui)
 
 add_library(lunaflow_editor LunaFlow/App/EditorApp.cpp LunaFlow/App/EditorApp.h
   LunaFlow/App/EditorMenus.cpp LunaFlow/App/EditorPanels.cpp LunaFlow/App/EditorViewport.cpp LunaFlow/App/EditorScene.cpp
+  LunaFlow/App/EditorParticles.cpp LunaFlow/App/EditorCopilot.cpp LunaFlow/App/EditorFbx.cpp LunaFlow/App/EditorShortcuts.cpp
   LunaFlow/App/UiTheme.cpp LunaFlow/App/UiTheme.h LunaFlow/App/UiFonts.h)
 target_link_libraries(lunaflow_editor PUBLIC lunaflow_render lunaflow_imgui lunaflow_gizmo comdlg32 shell32)
-add_executable(LunaFlow WIN32 LunaFlow/App/main.cpp LunaFlow/README.ko.md LunaFlow/THIRD_PARTY_NOTICES.md LunaFlow/Assets/TeamC_MotionExample.json)
+add_executable(LunaFlow WIN32 LunaFlow/App/main.cpp LunaFlow/App/LunaFlow.rc LunaFlow/App/Resource.h LunaFlow/README.ko.md LunaFlow/THIRD_PARTY_NOTICES.md LunaFlow/Assets/TeamC_MotionExample.json)
 target_link_libraries(LunaFlow PRIVATE lunaflow_editor)
 set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT LunaFlow)
 target_compile_definitions(LunaFlow PRIVATE LUNAFLOW_SHADER_DIR=L"${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow/Rendering/Shaders")
@@ -63,12 +68,21 @@ add_custom_target(LunaFlowAssets ALL
   COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:LunaFlow>/licenses"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/unity_tools" "$<TARGET_FILE_DIR:LunaFlow>/Unity"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow/Assets/Fonts" "$<TARGET_FILE_DIR:LunaFlow>/Fonts"
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow/Assets/Characters" "$<TARGET_FILE_DIR:LunaFlow>/Characters"
   COMMAND ${CMAKE_COMMAND} -E copy "${CMAKE_CURRENT_SOURCE_DIR}/third_party/ImGuizmo/LICENSE" "$<TARGET_FILE_DIR:LunaFlow>/licenses/ImGuizmo.txt"
   COMMAND ${CMAKE_COMMAND} -E copy "${IMGUI_DIR}/LICENSE.txt" "$<TARGET_FILE_DIR:LunaFlow>/licenses/DearImGui.txt"
   COMMAND ${CMAKE_COMMAND} -E copy "${assimp_SOURCE_DIR}/LICENSE" "$<TARGET_FILE_DIR:LunaFlow>/licenses/Assimp.txt"
   COMMAND ${CMAKE_COMMAND} -E copy "${json_SOURCE_DIR}/LICENSE.MIT" "$<TARGET_FILE_DIR:LunaFlow>/licenses/JSON.txt"
   COMMAND ${CMAKE_COMMAND} -E copy "${assimp_SOURCE_DIR}/contrib/zlib/README" "$<TARGET_FILE_DIR:LunaFlow>/licenses/zlib.txt")
 add_dependencies(LunaFlow LunaFlowAssets)
+find_program(LUNAFLOW_DOTNET dotnet)
+if(LUNAFLOW_DOTNET)
+  add_custom_target(LunaFlowCopilot
+    COMMAND "${LUNAFLOW_DOTNET}" build "${CMAKE_CURRENT_SOURCE_DIR}/agent_service/copilot_client/CopilotConnection.csproj"
+      --configuration Release --verbosity quiet "-p:RestorePackagesPath=${CMAKE_CURRENT_SOURCE_DIR}/build/copilot-packages"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" VERBATIM)
+  add_dependencies(LunaFlow LunaFlowCopilot)
+endif()
 
 source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow" PREFIX LunaFlow FILES
   LunaFlow/App/main.cpp LunaFlow/App/EditorApp.cpp)
@@ -81,10 +95,20 @@ target_compile_definitions(LunaFlowTests PRIVATE LUNAFLOW_SHADER_DIR=L"${CMAKE_C
 add_test(NAME LunaFlow.CoreAndDX11 COMMAND LunaFlowTests)
 add_executable(LunaFlowUiTests LunaFlow/Tests/UiTests.cpp)
 target_link_libraries(LunaFlowUiTests PRIVATE lunaflow_editor)
+add_dependencies(LunaFlowUiTests LunaFlowAssets)
 target_compile_definitions(LunaFlowUiTests PRIVATE LUNAFLOW_SOURCE_DIR=L"${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow")
 add_test(NAME LunaFlow.UiLayout COMMAND LunaFlowUiTests)
+add_executable(LunaFlowAssetTests LunaFlow/Tests/AssetTests.cpp)
+target_link_libraries(LunaFlowAssetTests PRIVATE lunaflow_core)
+add_dependencies(LunaFlowAssetTests LunaFlowAssets)
+add_test(NAME LunaFlow.DefaultCharacter COMMAND LunaFlowAssetTests)
 if(MSVC)
-  foreach(t lunaflow_core lunaflow_render lunaflow_imgui lunaflow_editor LunaFlow LunaFlowTests LunaFlowUiTests)
+  foreach(t lunaflow_core lunaflow_render lunaflow_imgui lunaflow_editor LunaFlow LunaFlowTests LunaFlowUiTests LunaFlowAssetTests)
     target_compile_options(${t} PRIVATE /utf-8 /W4 /permissive-)
   endforeach()
 endif()
+
+# Merged feature modules (each keeps its own folder, sources and tests).
+include("${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow-VFXAgent/VfxAgent.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow-Mocap/Mocap.cmake")
+include("${CMAKE_CURRENT_SOURCE_DIR}/LunaFlow-HelpBot/HelpBot.cmake")

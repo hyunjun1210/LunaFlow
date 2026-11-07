@@ -1,0 +1,6 @@
+.venv/
+Models/*.task
+Models/*.download
+Dist/
+__pycache__/
+*.pyc

@@ -5,10 +5,14 @@
 #include "UiFonts.h"
 #include "UiTheme.h"
 #include "ImGuizmo.h"
+#include "App/ContinuousInput.h"
+#include "App/Resource.h"
 #include <shellapi.h>
 #include <stdexcept>
 #include <chrono>
 #include <thread>
+#include <algorithm>
+#include <cmath>
 
 using Microsoft::WRL::ComPtr;
 static UINT resizeWidth=0,resizeHeight=0;
@@ -18,9 +22,17 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND,UINT,WPARAM,LP
 static LRESULT WINAPI WindowProc(HWND hwnd,UINT msg,WPARAM w,LPARAM l) {
     if (ImGui_ImplWin32_WndProcHandler(hwnd,msg,w,l)) return true;
     switch (msg) {
+    case WM_CAPTURECHANGED:
+        if(reinterpret_cast<HWND>(l)!=hwnd&&ImGui::GetCurrentContext()){
+            auto& input=ImGui::GetIO();for(int button=0;button<5;++button)input.AddMouseButtonEvent(button,false);
+        }break;
     case WM_SIZE: minimized=w==SIZE_MINIMIZED; if (!minimized) { resizeWidth=LOWORD(l); resizeHeight=HIWORD(l); } return 0;
     case WM_DPICHANGED: { const auto* r=reinterpret_cast<RECT*>(l); SetWindowPos(hwnd,nullptr,r->left,r->top,r->right-r->left,r->bottom-r->top,SWP_NOZORDER|SWP_NOACTIVATE); return 0; }
-    case WM_GETMINMAXINFO: { auto* info=reinterpret_cast<MINMAXINFO*>(l); info->ptMinTrackSize={1000,700}; return 0; }
+    case WM_GETMINMAXINFO: {
+        auto* info=reinterpret_cast<MINMAXINFO*>(l);const float dpi=ImGui_ImplWin32_GetDpiScaleForHwnd(hwnd);
+        MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(MonitorFromWindow(hwnd,MONITOR_DEFAULTTONEAREST),&monitor);
+        info->ptMinTrackSize={std::min(static_cast<LONG>(900*dpi),monitor.rcWork.right-monitor.rcWork.left),std::min(static_cast<LONG>(600*dpi),monitor.rcWork.bottom-monitor.rcWork.top)};return 0;
+    }
     case WM_CLOSE: if(activeEditor){activeEditor->RequestClose();return 0;}break;
     case WM_SYSCOMMAND: if ((w&0xfff0)==SC_KEYMENU) return 0; break;
     case WM_DESTROY: PostQuitMessage(0); return 0;
@@ -35,10 +47,14 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
     int result=0;
     try {
         ImGui_ImplWin32_EnableDpiAwareness();
-        WNDCLASSEXW wc{sizeof(wc),CS_CLASSDC,WindowProc,0,0,instance,nullptr,LoadCursor(nullptr,IDC_ARROW),nullptr,nullptr,L"LunaFlowDX11",nullptr};
+        const auto smallIcon=static_cast<HICON>(LoadImageW(instance,MAKEINTRESOURCEW(IDI_LUNAFLOW),IMAGE_ICON,GetSystemMetrics(SM_CXSMICON),GetSystemMetrics(SM_CYSMICON),LR_DEFAULTCOLOR));
+        WNDCLASSEXW wc{sizeof(wc),CS_CLASSDC,WindowProc,0,0,instance,LoadIconW(instance,MAKEINTRESOURCEW(IDI_LUNAFLOW)),LoadCursor(nullptr,IDC_ARROW),nullptr,nullptr,L"LunaFlowDX11",smallIcon};
         RegisterClassExW(&wc);
-        const float dpi=ImGui_ImplWin32_GetDpiScaleForMonitor(MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY));
-        window=CreateWindowW(wc.lpszClassName,L"LunaFlow",WS_OVERLAPPEDWINDOW,70,60,static_cast<int>(1440*dpi),static_cast<int>(940*dpi),nullptr,nullptr,instance,nullptr);
+        const auto startupMonitor=MonitorFromPoint({0,0},MONITOR_DEFAULTTOPRIMARY);
+        float dpi=ImGui_ImplWin32_GetDpiScaleForMonitor(startupMonitor);
+        MONITORINFO monitor{sizeof(monitor)};GetMonitorInfoW(startupMonitor,&monitor);
+        const int width=std::min(static_cast<int>(1440*dpi),static_cast<int>(monitor.rcWork.right-monitor.rcWork.left)),height=std::min(static_cast<int>(940*dpi),static_cast<int>(monitor.rcWork.bottom-monitor.rcWork.top));
+        window=CreateWindowW(wc.lpszClassName,L"LunaFlow",WS_OVERLAPPEDWINDOW,monitor.rcWork.left+(monitor.rcWork.right-monitor.rcWork.left-width)/2,monitor.rcWork.top+(monitor.rcWork.bottom-monitor.rcWork.top-height)/2,width,height,nullptr,nullptr,instance,nullptr);
         if (!window) throw std::runtime_error("Cannot create the application window.");
         DXGI_SWAP_CHAIN_DESC desc{}; desc.BufferCount=2; desc.BufferDesc.Format=DXGI_FORMAT_R8G8B8A8_UNORM;
         desc.BufferUsage=DXGI_USAGE_RENDER_TARGET_OUTPUT; desc.OutputWindow=window; desc.SampleDesc.Count=1;
@@ -79,7 +95,10 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,LPWSTR,int show) {
                 Check(swap->ResizeBuffers(0,resizeWidth,resizeHeight,DXGI_FORMAT_UNKNOWN,0),"Window resize failed.");
                 resizeWidth=resizeHeight=0; createTarget();
             }
-            ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); ImGuizmo::BeginFrame();app.Frame(io.DeltaTime); ImGui::Render();
+            const float windowDpi=ImGui_ImplWin32_GetDpiScaleForHwnd(window);
+            if(std::abs(windowDpi-dpi)>.001f){LunaFlow::ConfigureUiTheme(windowDpi);dpi=windowDpi;}
+            ImGui_ImplDX11_NewFrame(); ImGui_ImplWin32_NewFrame(); ImGui::NewFrame(); ImGuizmo::BeginFrame();
+            LunaFlow::BeginContinuousInputFrame();app.Frame(io.DeltaTime);LunaFlow::WrapContinuousMouse(window);ImGui::Render();
             if(app.WantQuit())break;
             ID3D11RenderTargetView* target=mainTarget.Get(); context->OMSetRenderTargets(1,&target,nullptr);
             const float color[]={.043f,.051f,.075f,1}; context->ClearRenderTargetView(target,color); ImGui_ImplDX11_RenderDrawData(ImGui::GetDrawData());

@@ -1,0 +1,6 @@
+{
+  "name": "LunaFlow.UnityImporter.Editor",
+  "rootNamespace": "LunaFlow.UnityImporter.Editor",
+  "references": ["LunaFlow.UnityImporter.Runtime"],
+  "includePlatforms": ["Editor"]
+}

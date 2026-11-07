@@ -1,0 +1,18 @@
+{
+  "format": "lunaflow.agent.request",
+  "version": 1,
+  "agentId": "lunaflow.vfx",
+  "requestId": "studio-test-request",
+  "sessionId": "studio-test-session",
+  "prompt": "선택한 오른손 뼈에 파란 마법 파티클을 만들고 재생해 줘. 초당 80개, 수명 1.5초.",
+  "clipId": "sample-wave",
+  "selectedBonePath": "Root/RightHand",
+  "selectedEffectId": "",
+  "selectedClip": { "id": "sample-wave", "name": "Wave", "duration": 3, "speed": 1, "loop": true },
+  "clips": [{ "id": "sample-wave", "name": "Wave", "duration": 3, "revision": 0 }],
+  "bones": [{ "name": "RightHand", "path": "Root/RightHand" }],
+  "effects": [],
+  "time": 0,
+  "allowedOperations": ["create_particles", "update_particles", "attach_effect", "preview_motion"],
+  "conversationHistory": []
+}

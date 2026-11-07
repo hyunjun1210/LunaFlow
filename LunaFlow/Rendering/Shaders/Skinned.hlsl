@@ -41,6 +41,11 @@ float4 PSMain(Output input) : SV_TARGET
 {
     float4 color = BaseColor * input.color;
     if (Options.x > .5) color *= Diffuse.Sample(LinearWrap,input.uv);
+    if (Options.z > .5) {
+        float2 offset = input.uv * 2 - 1;
+        float fade = saturate(1 - dot(offset,offset));
+        color.a *= fade * fade;
+    }
     if (Options.y > .5) return color;
     if (color.a < .1) discard;
     float3 n = normalize(input.normal);

@@ -1,5 +1,6 @@
 #include "Core/ProjectIO.h"
 #include "Core/Serialization.h"
+#include "Core/Particles.h"
 #include <cmath>
 #include <fstream>
 #include <set>
@@ -35,7 +36,8 @@ void SaveProject(const std::filesystem::path& path,const ProjectData& project) {
     }
     scene["objects"]=Json::array();for(const auto& o:m.objects)scene["objects"].push_back({{"id",o.id},{"name",o.name},{"root",o.root}});
     scene["effects"]=Json::array();for(const auto& e:m.effects)scene["effects"].push_back({{"id",e.id},{"name",e.name},{"clipId",e.clipId},{"type",static_cast<int>(e.type)},
-        {"bone",e.bone},{"local",TRS(e.local)},{"color",V4(e.color)},{"size",e.size},{"intensity",e.intensity},{"start",e.start},{"end",e.end}});
+        {"bone",e.bone},{"local",TRS(e.local)},{"color",V4(e.color)},{"size",e.size},{"intensity",e.intensity},{"start",e.start},{"end",e.end},
+        {"enabled",e.enabled},{"sourcePrompt",e.sourcePrompt},{"particles",e.type==EffectType::Particles?EncodeParticles(e.particles):Json(nullptr)}});
     for(const auto& clip:m.clips){auto c=EncodeClip(m.skeleton,clip);c.erase("bones");j["clips"].push_back(std::move(c));}
     j["editor"]={{"clipId",project.selectedClipId},{"bonePath",project.selectedBonePath},{"time",project.time},
         {"cameraTarget",V3(project.cameraTarget)},{"cameraYaw",project.cameraYaw},{"cameraPitch",project.cameraPitch},{"cameraDistance",project.cameraDistance}};
@@ -83,9 +85,13 @@ ProjectData LoadProject(const std::filesystem::path& path) {
     if(m.objects.empty()&&!m.meshes.empty())m.objects.push_back({"scene-model","Model",0});
     if(scene.contains("effects"))for(const auto& item:scene["effects"]){
         EffectData e;e.id=item.at("id").get<std::string>();e.name=item.at("name").get<std::string>();e.clipId=item.at("clipId").get<std::string>();
-        int type=item.at("type").get<int>();if(type<0||type>2)throw std::runtime_error("Unknown effect type.");e.type=static_cast<EffectType>(type);
+        int type=item.at("type").get<int>();if(type<0||type>3)throw std::runtime_error("Unknown effect type.");e.type=static_cast<EffectType>(type);
         e.bone=item.at("bone").get<uint32_t>();e.local=ReadTRS(item.at("local"));e.color=R4(item.at("color"));e.size=Num(item.at("size"));e.intensity=Num(item.at("intensity"));
-        e.start=item.at("start").get<double>();e.end=item.at("end").get<double>();if(e.bone>=m.skeleton.bones.size()||e.size<=0||e.intensity<0||!std::isfinite(e.start)||!std::isfinite(e.end)||e.start<0||e.end<e.start)throw std::runtime_error("Invalid effect definition.");m.effects.push_back(std::move(e));
+        e.start=item.at("start").get<double>();e.end=item.at("end").get<double>();if(e.bone>=m.skeleton.bones.size()||e.size<=0||e.intensity<0||!std::isfinite(e.start)||!std::isfinite(e.end)||e.start<0||e.end<e.start)throw std::runtime_error("Invalid effect definition.");
+        e.enabled=item.value("enabled",true);e.sourcePrompt=item.value("sourcePrompt",std::string{});
+        if(e.type==EffectType::Particles)e.particles=DecodeParticles(item.at("particles"));
+        if(!e.clipId.empty()&&!clipIds.count(e.clipId))throw std::runtime_error("Unknown effect motion.");
+        m.effects.push_back(std::move(e));
     }
     const auto& editor=j.at("editor");project.selectedClipId=editor.value("clipId",m.clips[0].id);project.selectedBonePath=editor.value("bonePath",m.skeleton.bones[0].path);
     project.time=editor.value("time",0.0);if(!std::isfinite(project.time)||project.time<0)throw std::runtime_error("Invalid project playhead.");

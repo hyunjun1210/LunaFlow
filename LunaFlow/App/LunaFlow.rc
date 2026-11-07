@@ -1,0 +1,4 @@
+#include "Resource.h"
+
+// Application icon (16-256 px). Regenerate with Assets/Icon/GenerateIcon.py.
+IDI_LUNAFLOW ICON "../Assets/Icon/LunaFlow.ico"

@@ -1,30 +1,52 @@
 #include "Rendering/RendererDX11.h"
+#include "Core/Particles.h"
 #include <d3dcompiler.h>
 #include <wincodec.h>
 #include <algorithm>
 #include <cfloat>
 #include <cmath>
 #include <cstring>
+#include <map>
 #include <stdexcept>
 
 namespace LunaFlow {
 static void Check(HRESULT hr,const char* message) {
     if (FAILED(hr)) throw std::runtime_error(std::string(message) + " (HRESULT " + std::to_string(static_cast<unsigned>(hr)) + ")");
 }
-void PreviewCamera::Orbit(float dx,float dy) { yaw-=dx*.008f; pitch=std::clamp(pitch+dy*.008f,-1.5f,1.5f); }
+void PreviewCamera::Orbit(float dx,float dy) { yaw-=dx*.008f; pitch=std::clamp(pitch+dy*.008f,-XM_PIDIV2,XM_PIDIV2); }
 void PreviewCamera::Zoom(float wheel) { distance=std::clamp(distance*std::exp(-wheel*.15f),sceneRadius*.05f,sceneRadius*150); }
 XMMATRIX PreviewCamera::View() const {
     const XMVECTOR targetV=XMLoadFloat3(&target);
     const XMVECTOR offset=XMVectorSet(std::sin(yaw)*std::cos(pitch),std::sin(pitch),-std::cos(yaw)*std::cos(pitch),0)*distance;
-    return XMMatrixLookAtLH(targetV+offset,targetV,XMVectorSet(0,1,0,0));
+    // The pitch derivative of the orbit direction is the exact camera up vector. Unlike a
+    // fixed world up it stays valid for straight top and bottom views.
+    const XMVECTOR up=XMVectorSet(-std::sin(yaw)*std::sin(pitch),std::cos(pitch),std::cos(yaw)*std::sin(pitch),0);
+    return XMMatrixLookAtLH(targetV+offset,targetV,up);
 }
 XMMATRIX PreviewCamera::Projection(float aspect) const {
-    return XMMatrixPerspectiveFovLH(XMConvertToRadians(42),std::max(aspect,.01f),std::max(sceneRadius*.001f,.00001f),std::max(distance+sceneRadius*100,1.0f));
+    aspect=std::max(aspect,.01f);
+    if(orthographic){
+        // Match the perspective framing at the orbit target so switching views keeps the subject's size.
+        const float height=std::max(2*distance*std::tan(XMConvertToRadians(21)),1e-5f);
+        const float depth=std::max(distance+sceneRadius*100,1.0f);
+        return XMMatrixOrthographicLH(height*aspect,height,-depth,depth);
+    }
+    return XMMatrixPerspectiveFovLH(XMConvertToRadians(42),aspect,std::max(sceneRadius*.001f,.00001f),std::max(distance+sceneRadius*100,1.0f));
 }
 void PreviewCamera::Pan(float dx,float dy,float height) {
     const XMMATRIX inv=XMMatrixInverse(nullptr,View());
     const float perPixel=2*distance*std::tan(XMConvertToRadians(21))/std::max(height,1.0f);
     XMStoreFloat3(&target,XMLoadFloat3(&target)+(-inv.r[0]*dx+inv.r[1]*dy)*perPixel);
+}
+void PreviewCamera::Fly(XMFLOAT3 direction,float deltaTime,bool fast) {
+    auto local=XMLoadFloat3(&direction);const float length=XMVectorGetX(XMVector3Length(local));
+    if(length<=1e-6f||deltaTime<=0)return;
+    if(length>1)local/=length;
+    const auto inverse=XMMatrixInverse(nullptr,View());
+    // Q/E move vertically in world space, matching the Scene view fly camera.
+    const auto world=XMVector3Normalize(inverse.r[0]*XMVectorGetX(local)+XMVectorSet(0,1,0,0)*XMVectorGetY(local)+inverse.r[2]*XMVectorGetZ(local));
+    const float speed=std::max(sceneRadius,.1f)*(fast?6.0f:2.0f)*std::clamp(flySpeed,.05f,20.0f);
+    XMStoreFloat3(&target,XMLoadFloat3(&target)+world*(speed*std::min(deltaTime,.1f)));
 }
 static ComPtr<ID3D11ShaderResourceView> MakeTexture(ID3D11Device* device,const uint8_t* pixels,UINT w,UINT h) {
     D3D11_TEXTURE2D_DESC desc{}; desc.Width=w; desc.Height=h; desc.MipLevels=1; desc.ArraySize=1;
@@ -88,8 +110,11 @@ void RendererDX11::Initialize(ID3D11Device* d,ID3D11DeviceContext* c,const std::
     D3D11_BLEND_DESC blend{}; blend.RenderTarget[0].RenderTargetWriteMask=D3D11_COLOR_WRITE_ENABLE_ALL;
     Check(d->CreateBlendState(&blend,&blend_),"Create blend state");
     auto& target=blend.RenderTarget[0];target.BlendEnable=TRUE;target.SrcBlend=D3D11_BLEND_SRC_ALPHA;target.DestBlend=D3D11_BLEND_ONE;target.BlendOp=D3D11_BLEND_OP_ADD;
-    target.SrcBlendAlpha=D3D11_BLEND_ONE;target.DestBlendAlpha=D3D11_BLEND_ZERO;target.BlendOpAlpha=D3D11_BLEND_OP_ADD;
+    // The viewport is composited by ImGui. Preserve its opaque alpha, including the transparent quad corners.
+    target.SrcBlendAlpha=D3D11_BLEND_ZERO;target.DestBlendAlpha=D3D11_BLEND_ONE;target.BlendOpAlpha=D3D11_BLEND_OP_ADD;
     Check(d->CreateBlendState(&blend,&additive_),"Create effect blend state");
+    target.DestBlend=D3D11_BLEND_INV_SRC_ALPHA;
+    Check(d->CreateBlendState(&blend,&alpha_),"Create particle alpha blend state");
     const uint8_t white[4]={255,255,255,255}; white_=MakeTexture(d,white,1,1);
 }
 void RendererDX11::SetModel(const ModelAsset& model) {
@@ -167,7 +192,7 @@ void RendererDX11::Draw(const MeshData& mesh,const GpuMesh& gpu,const Pose& pose
     context_->IASetIndexBuffer(gpu.indices.Get(),DXGI_FORMAT_R32_UINT,0); context_->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
     context_->DrawIndexed(gpu.count,0,0);
 }
-void RendererDX11::DrawLines(const std::vector<Vertex>& vertices,Constants& cb,D3D11_PRIMITIVE_TOPOLOGY topology) {
+void RendererDX11::DrawLines(const std::vector<Vertex>& vertices,Constants& cb,D3D11_PRIMITIVE_TOPOLOGY topology,bool particle) {
     if (vertices.empty()) return;
     if (vertices.size()>lineCapacity_) {
         lineCapacity_=vertices.size()*2; lines_.Reset(); D3D11_BUFFER_DESC desc{};
@@ -176,23 +201,51 @@ void RendererDX11::DrawLines(const std::vector<Vertex>& vertices,Constants& cb,D
     }
     D3D11_MAPPED_SUBRESOURCE map{}; Check(context_->Map(lines_.Get(),0,D3D11_MAP_WRITE_DISCARD,0,&map),"Upload debug lines");
     std::memcpy(map.pData,vertices.data(),vertices.size()*sizeof(Vertex)); context_->Unmap(lines_.Get(),0);
-    cb.options={0,1,0,0}; XMStoreFloat4x4(&cb.skin[0],XMMatrixIdentity()); XMStoreFloat4x4(&cb.normal[0],XMMatrixIdentity());
+    cb.options={0,1,particle?1.0f:0.0f,0}; XMStoreFloat4x4(&cb.skin[0],XMMatrixIdentity()); XMStoreFloat4x4(&cb.normal[0],XMMatrixIdentity());
     context_->UpdateSubresource(constants_.Get(),0,nullptr,&cb,0,0);
     UINT stride=sizeof(Vertex),offset=0; ID3D11Buffer* vb=lines_.Get(); context_->IASetVertexBuffers(0,1,&vb,&stride,&offset);
     context_->IASetPrimitiveTopology(topology); context_->Draw(static_cast<UINT>(vertices.size()),0);
 }
-void RendererDX11::DrawEffects(const ModelAsset& model,const Pose& pose,const RenderOptions& options,Constants& cb) {
+void RendererDX11::DrawEffects(const ModelAsset& model,const Pose& pose,const PreviewCamera& camera,const RenderOptions& options,Constants& cb) {
     if(!options.showEffects)return;
     context_->OMSetBlendState(additive_.Get(),nullptr,0xffffffff);context_->OMSetDepthStencilState(effectDepthState_.Get(),0);
+    size_t particleBudget=16384;
+    const auto inverseView=XMMatrixInverse(nullptr,camera.View());
     for(const auto& effect:model.effects){
-        if(effect.bone>=pose.global.size()||options.time<effect.start||options.time>effect.end)continue;
+        if(!effect.enabled||effect.bone>=pose.global.size()||options.time<effect.start||options.time>effect.end)continue;
         if(!effect.clipId.empty()&&(!options.activeClip||effect.clipId!=options.activeClip->id))continue;
+        context_->OMSetBlendState(additive_.Get(),nullptr,0xffffffff);
         cb.color=effect.color;cb.color.x*=effect.intensity;cb.color.y*=effect.intensity;cb.color.z*=effect.intensity;cb.color.w*=.55f;
         std::vector<Vertex> vertices;
         auto add=[&](XMFLOAT3 p,float opacity=1){Vertex v;v.position=p;v.weights[0]=1;v.color.w=opacity;vertices.push_back(v);};
         auto transform=[&](XMFLOAT3 local,const Pose& sample){XMFLOAT3 world;XMStoreFloat3(&world,XMVector3TransformCoord(XMLoadFloat3(&local),Matrix(effect.local)*XMLoadFloat4x4(&sample.global[effect.bone])));return world;};
         const float time=static_cast<float>(options.time-effect.start);
-        if(effect.type==EffectType::Trail&&options.activeClip){
+        if(effect.type==EffectType::Particles){
+            if(!particleBudget)continue;
+            auto particles=SampleParticles(effect,options.time);if(particles.size()>particleBudget)particles.resize(particleBudget);particleBudget-=particles.size();
+            const auto local=Matrix(effect.local);std::map<int64_t,XMFLOAT4X4> births;
+            for(auto& particle:particles){
+                XMMATRIX attachment=XMLoadFloat4x4(&pose.global[effect.bone]);
+                if(effect.particles.worldSpace&&options.activeClip){
+                    // Cache emitter poses at 60 Hz; cost depends on lifetime, not the emission rate.
+                    const auto frame=static_cast<int64_t>(std::floor(particle.birth*60));auto found=births.find(frame);
+                    if(found==births.end()){const auto atBirth=EvaluatePose(model.skeleton,options.activeClip,effect.start+frame/60.0);found=births.emplace(frame,atBirth.global[effect.bone]).first;}
+                    attachment=XMLoadFloat4x4(&found->second);
+                }
+                const auto matrix=local*attachment;
+                XMStoreFloat3(&particle.position,XMVector3TransformCoord(XMLoadFloat3(&particle.position),matrix));
+                particle.size*=std::max({XMVectorGetX(XMVector3Length(matrix.r[0])),XMVectorGetX(XMVector3Length(matrix.r[1])),XMVectorGetX(XMVector3Length(matrix.r[2]))});
+            }
+            if(!effect.particles.additive){const auto view=camera.View();std::stable_sort(particles.begin(),particles.end(),[&](const auto& a,const auto& b){return XMVectorGetZ(XMVector3TransformCoord(XMLoadFloat3(&a.position),view))>XMVectorGetZ(XMVector3TransformCoord(XMLoadFloat3(&b.position),view));});}
+            vertices.reserve(particles.size()*6);
+            const XMFLOAT2 corners[]={{-1,-1},{-1,1},{1,1},{-1,-1},{1,1},{1,-1}};
+            for(const auto& particle:particles)for(const auto& corner:corners){
+                Vertex v;v.weights[0]=1;v.color=particle.color;v.uv={(corner.x+1)*.5f,(corner.y+1)*.5f};
+                XMStoreFloat3(&v.position,XMLoadFloat3(&particle.position)+(inverseView.r[0]*corner.x+inverseView.r[1]*corner.y)*(particle.size*.5f));vertices.push_back(v);
+            }
+            cb.color={1,1,1,1};context_->OMSetBlendState(effect.particles.additive?additive_.Get():alpha_.Get(),nullptr,0xffffffff);
+            DrawLines(vertices,cb,D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,true);
+        }else if(effect.type==EffectType::Trail&&options.activeClip){
             const double start=std::max(effect.start,options.time-.25);auto previous=EvaluatePose(model.skeleton,options.activeClip,start);
             auto a=transform({0,0,0},previous),b=transform({0,effect.size,0},previous);
             for(int i=1;i<=16;++i){auto sample=EvaluatePose(model.skeleton,options.activeClip,start+(options.time-start)*i/16);
@@ -260,7 +313,7 @@ void RendererDX11::Render(const ModelAsset& model,const Pose& pose,const Preview
         }
         cb.color={.34f,.92f,.76f,1}; DrawLines(lines,cb); cb.color={1,.73f,.32f,1}; DrawLines(selected,cb);
     }
-    DrawEffects(model,pose,options,cb);
+    DrawEffects(model,pose,camera,options,cb);
     context_->PSSetShaderResources(0,1,&empty);
     context_->OMSetRenderTargets(0,nullptr,nullptr);
 }

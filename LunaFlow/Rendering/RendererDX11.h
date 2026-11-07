@@ -8,9 +8,13 @@ using Microsoft::WRL::ComPtr;
 struct PreviewCamera {
     XMFLOAT3 target{0,1,0};
     float yaw = .35f, pitch = .12f, distance = 4, sceneRadius = 1;
+    // Fly-speed multiplier (mouse wheel while flying) and orthographic axis views.
+    float flySpeed = 1;
+    bool orthographic = false;
     void Orbit(float dx,float dy);
     void Pan(float dx,float dy,float viewportHeight);
     void Zoom(float wheel);
+    void Fly(XMFLOAT3 localDirection,float deltaTime,bool fast=false);
     XMMATRIX View() const;
     XMMATRIX Projection(float aspect) const;
 };
@@ -39,11 +43,11 @@ private:
         XMFLOAT4X4 viewProjection;
         std::array<XMFLOAT4X4,MaxSkinBones> skin,normal;
         XMFLOAT4 color;
-        XMFLOAT4 options; // texture enabled, unlit, unused, unused
+        XMFLOAT4 options; // texture enabled, unlit, soft particle, unused
     };
     void Draw(const MeshData&,const GpuMesh&,const Pose&,Constants&);
-    void DrawLines(const std::vector<Vertex>&,Constants&,D3D11_PRIMITIVE_TOPOLOGY topology=D3D11_PRIMITIVE_TOPOLOGY_LINELIST);
-    void DrawEffects(const ModelAsset&,const Pose&,const RenderOptions&,Constants&);
+    void DrawLines(const std::vector<Vertex>&,Constants&,D3D11_PRIMITIVE_TOPOLOGY topology=D3D11_PRIMITIVE_TOPOLOGY_LINELIST,bool particle=false);
+    void DrawEffects(const ModelAsset&,const Pose&,const PreviewCamera&,const RenderOptions&,Constants&);
     ComPtr<ID3D11Device> device_;
     ComPtr<ID3D11DeviceContext> context_;
     ComPtr<ID3D11Texture2D> color_,depth_;
@@ -59,6 +63,7 @@ private:
     ComPtr<ID3D11SamplerState> sampler_;
     ComPtr<ID3D11BlendState> blend_;
     ComPtr<ID3D11BlendState> additive_;
+    ComPtr<ID3D11BlendState> alpha_;
     std::vector<GpuMesh> meshes_;
     std::vector<ComPtr<ID3D11ShaderResourceView>> textures_;
     std::vector<std::string> warnings_;

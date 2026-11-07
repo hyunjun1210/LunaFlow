@@ -1,0 +1,7 @@
+{
+  "SuppliedEndpoint": "",
+  "EnvironmentId": "<help-agent-environment-GUID>",
+  "SchemaName": "<help-agent-schema-name>",
+  "TenantId": "<Microsoft-Entra-tenant-GUID>",
+  "AppClientId": "<public-client-application-GUID>"
+}

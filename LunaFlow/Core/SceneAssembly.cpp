@@ -1,4 +1,5 @@
 #include "Core/SceneAssembly.h"
+#include "Core/Particles.h"
 #include "Core/EditorCommands.h"
 #include <algorithm>
 #include <functional>
@@ -77,6 +78,7 @@ void AttachObject(ModelAsset& model,const std::string& id,int parentBone,const A
 }
 std::string AddEffect(ModelAsset& model,EffectType type,uint32_t bone,std::string clipId,double duration) {
     if(bone>=model.skeleton.bones.size())throw std::runtime_error("Unknown effect attachment bone.");
+    if(type==EffectType::Particles){auto e=MakeParticleEffect(ParticlePreset::Custom,bone,clipId,duration);const auto id=e.id;model.effects.push_back(std::move(e));return id;}
     EffectData effect;effect.id=NewClipId();effect.type=type;effect.bone=bone;effect.clipId=std::move(clipId);effect.end=std::max(duration,.1);
     effect.name=type==EffectType::Trail?"Blade trail":type==EffectType::Sparks?"Sparks":"Aura";
     model.effects.push_back(effect);return effect.id;

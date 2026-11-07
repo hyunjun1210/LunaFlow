@@ -1,0 +1,17 @@
+{
+  "name": "com.lunaflow.unity-importer",
+  "version": "0.1.0",
+  "displayName": "LunaFlow Project Importer",
+  "description": "Import LunaFlow .lunaflow projects directly as animated Unity prefabs, including meshes, skinning, materials and effects.",
+  "unity": "6000.0",
+  "dependencies": {
+    "com.unity.modules.animation": "1.0.0",
+    "com.unity.modules.imageconversion": "1.0.0",
+    "com.unity.modules.jsonserialize": "1.0.0",
+    "com.unity.modules.particlesystem": "1.0.0"
+  },
+  "author": { "name": "LunaFlow" },
+  "samples": [
+    { "displayName": "Animated sample", "description": "A self-contained project for testing direct .lunaflow import.", "path": "Samples~/AnimatedSample" }
+  ]
+}

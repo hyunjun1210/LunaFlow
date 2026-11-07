@@ -1,0 +1,13 @@
+Library/
+Temp/
+Logs/
+obj/
+bin/
+.vs/
+TestResults/
+Tools~/bin/
+Tools~/obj/
+Tools~/.build/
+.test-project/
+Dist~/
+*.csproj.user
