@@ -29,8 +29,11 @@ LunaFlow가 질문마다 관련 설명서 발췌와 현재 편집기 상태를 �
 
 ## 3. 사용 설명서를 지식으로 추가 (권장)
 
-1. **Knowledge → Add knowledge → Files**(파일 업로드)를 고른다.
-2. 이 폴더의 **`Knowledge/LunaFlow_Help.ko.md`**를 올린다. `.md` 업로드가 막혀 있으면 같은 파일을 `LunaFlow_Help.ko.txt`로 복사해 올린다.
+> **에이전트가 만들어져 편집 화면이 열린 뒤에** 지식을 추가한다. 만들기 화면에서 파일을 같이 올리면
+> 저장과 생성이 같은 파일을 두 번 등록하려다 `botcomponent ... database constraint ... schemaname: ….file.lunaflowhelpkomd_…` 오류가 날 수 있다.
+
+1. **Knowledge → Add knowledge → Files**(파일 업로드)를 고른다. **Add to agent**는 한 번만 누른다.
+2. 이 폴더의 **`Knowledge/LunaFlow_Help.ko.md`**를 올린다(`.md`는 공식 지원 형식). 같은 파일을 다시 올려야 하면 기존 항목을 먼저 지우거나 `LunaFlow_Help_v2.md`처럼 이름을 바꿔 올린다.
 3. 처리 상태가 **Ready**가 될 때까지 기다린다.
 4. 생성형 AI 설정의 **일반 지식(General knowledge) 사용**과 **웹 검색**은 끄는 것을 권장한다. 메뉴 위치는 Copilot Studio 버전에 따라 다르다. 끄면 설명서에 없는 기능을 지어내는 일이 줄어든다.
 
@@ -106,6 +109,7 @@ LunaFlow 루트에서 PowerShell을 열고 실행한다.
 
 | 증상 | 확인할 내용 |
 |---|---|
+| Copilot Studio에서 "We couldn't create the agent" / "Some of your changes couldn't be saved" + `violates a database constraint … schemaname: ….file.lunaflowhelpkomd_…` | 지식 파일이 두 번 등록되려 한 것. 새로고침 후 에이전트 목록에 `LunaFlow Helper`가 이미 있으면 그것을 열어 지침·지식이 있는지만 확인한다(지식 파일이 있으면 다시 올리지 않음). 없거나 열리지 않으면 지식 없이 다시 만들고, 열린 뒤 3절대로 파일을 한 번 추가한다. 같은 이름 에이전트가 두 개면 쓰지 않는 쪽을 삭제한다 |
 | 주황색 "설정되지 않았습니다" | `LunaFlow-HelpBot\settings.local.json`과 `Build-CopilotClient.ps1`로 만든 SDK 클라이언트가 있는지 |
 | 답 대신 "Copilot Studio 응답 실패" + 내장 답변 | 게시 여부, SchemaName, 에이전트 사용 권한, 로그인 계정. 실패해도 내장 도움말 답이 함께 나온다 |
 | "이전 대화가 만료되어 새 대화를 시작합니다." | 오래된 대화가 서버에서 만료됨. 자동으로 새 대화로 이어서 답한다 |
