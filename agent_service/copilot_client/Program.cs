@@ -232,6 +232,19 @@ internal static class SelfTest
         start.Add(new Activity { Type = "message", Text = "greeting", Conversation = new ConversationAccount { Id = "conv-3" } }, collectText: false);
         start.Remember("other");
         Require(!start.HasText && start.ConversationId == "conv-3", "Conversation start keeps the id without greeting text");
+
+        var (body, chips) = BridgeWorker.SplitSuggestions("우클릭을 누른 채 W/A/S/D로 이동합니다.[1]\n\n**추천 질문:** 선택 대상 맞추기 / 정면·측면 보기 / \"전체 단축키\"[2]\n");
+        Require(body == "우클릭을 누른 채 W/A/S/D로 이동합니다.[1]" && chips.SequenceEqual(["선택 대상 맞추기", "정면·측면 보기", "전체 단축키"]), "Suggestion line becomes chips");
+        (body, chips) = BridgeWorker.SplitSuggestions("Answer\n\nSuggested questions:\n- Camera\n1) Unity/Blender keys\n- Camera");
+        Require(body == "Answer" && chips.SequenceEqual(["Camera", "Unity/Blender keys"]), "Bulleted suggestions become chips");
+        (body, chips) = BridgeWorker.SplitSuggestions("추천 질문: a / b\n이 줄은 본문입니다.");
+        Require(body == "추천 질문: a / b\n이 줄은 본문입니다." && chips.Count == 0, "Prose after the label is kept");
+        (body, chips) = BridgeWorker.SplitSuggestions("추천 질문은 메뉴에 없습니다. W/A/S/D를 쓰세요.");
+        Require(chips.Count == 0 && body.EndsWith("쓰세요."), "Answers without a suggestion line are unchanged");
+        (body, chips) = BridgeWorker.SplitSuggestions("본문[1]\n\n이어서 물어볼 만한 질문:\n- 시점 회전은 어떻게 하나요?\n- 선택 항목에 맞추기(F)\n");
+        Require(body == "본문[1]" && chips.SequenceEqual(["시점 회전은 어떻게 하나요?", "선택 항목에 맞추기(F)"]), "Free-form suggestion header becomes chips");
+        (body, chips) = BridgeWorker.SplitSuggestions("본문\n\n참고: Shift를 누르면 빨라집니다.\n- 휠로 속도 조절");
+        Require(chips.Count == 0 && body.EndsWith("속도 조절"), "Ordinary labelled notes stay in the answer");
     }
 
     private static void Require(bool success, string name)

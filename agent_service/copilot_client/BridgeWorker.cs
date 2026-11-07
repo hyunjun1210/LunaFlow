@@ -1,5 +1,6 @@
 ﻿using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Agents.Core.Models;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -92,11 +93,13 @@ internal static class BridgeWorker
             {
                 Emit("running", "LunaFlow 도우미가 사용 설명서를 찾아 답변을 준비하고 있습니다.");
                 var reply = await AskHelpAsync(client, help, message => Emit("running", message), timeout.Token);
+                var (answer, chips) = SplitSuggestions(reply.Text);
                 Console.WriteLine(JsonSerializer.Serialize(new
                 {
                     requestId, sessionId, status = "completed",
-                    message = reply.HasText ? reply.Text : "도우미가 빈 답변을 반환했습니다. 질문을 바꿔 다시 시도하세요.",
-                    plan = (object?)null, conversationId = reply.ConversationId ?? "", suggestions = reply.Suggestions
+                    message = answer.Length > 0 ? answer : "도우미가 빈 답변을 반환했습니다. 질문을 바꿔 다시 시도하세요.",
+                    plan = (object?)null, conversationId = reply.ConversationId ?? "",
+                    suggestions = reply.Suggestions.Concat(chips).Distinct().Take(4).ToList()
                 }));
                 Console.Out.Flush();
                 return 0;
@@ -179,6 +182,45 @@ internal static class BridgeWorker
                     suggestions.Add(title);
             }
         }
+    }
+
+    private static readonly string[] SuggestionWords = ["추천", "물어볼", "이어서", "후속", "다음 질문", "관련 질문", "suggest", "follow-up", "follow up", "related question", "next question"];
+
+    // Generative answers carry no suggested actions, so the agent ends with "추천 질문: a / b / c"
+    // (or a short header plus bullets); that tail becomes chips.
+    internal static (string Text, List<string> Suggestions) SplitSuggestions(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var end = lines.Length;
+        while (end > 0 && string.IsNullOrWhiteSpace(lines[end - 1])) end--;
+        for (var i = end - 1; i >= Math.Max(0, end - 8); i--)
+        {
+            if (Regex.IsMatch(lines[i], @"\A\s*(?:[-*•]|\d+[.)])\s")) continue;
+            var head = lines[i].Replace("**", "").Replace("__", "").Trim().TrimStart('#', '>', ' ');
+            var colon = head.IndexOfAny([':', '：']);
+            if (colon <= 0 || colon > 30 || !SuggestionWords.Any(w => head[..colon].Contains(w, StringComparison.OrdinalIgnoreCase))) continue;
+            var rest = head[(colon + 1)..].Trim();
+            var items = new List<string>();
+            if (rest.Length > 0) items.AddRange(rest.Split([" / ", " · ", "|"], StringSplitOptions.None));
+            for (var j = i + 1; j < end; j++)
+            {
+                var line = lines[j].Trim();
+                if (line.Length == 0) continue;
+                var item = Regex.Replace(line, @"\A(?:[-*•]|\d+[.)])\s+", "");
+                // Prose after the label means it was not a suggestion list; leave the answer untouched.
+                if (item == line) return (text.Trim(), []);
+                items.Add(item);
+            }
+            var chips = new List<string>();
+            foreach (var raw in items)
+            {
+                var chip = Regex.Replace(raw.Replace("**", "").Replace("`", ""), @"\s*\[\d+\]", "").Trim().Trim('"', '\'', '“', '”', '‘', '’').Trim();
+                if (chip.Length is > 0 and <= 80 && !chip.Any(char.IsControl) && chips.Count < 4 && !chips.Contains(chip)) chips.Add(chip);
+            }
+            if (chips.Count == 0) break;
+            return (string.Join("\n", lines[..i]).Trim(), chips);
+        }
+        return (text.Trim(), []);
     }
 
     // Continues the previous Copilot Studio conversation; if it expired, a new one is primed with the recent history.
