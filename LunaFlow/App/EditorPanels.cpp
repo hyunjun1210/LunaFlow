@@ -6,6 +6,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 namespace LunaFlow {
 struct CompactInspector {
@@ -52,17 +54,27 @@ static TimelineGeometry MeasureTimeline(float width,const char* loopLabel,const 
     g.rows=1+(g.fpsInline?0:1)+(6+g.buttonsPerRow-1)/g.buttonsPerRow+(g.extrasInline?0:1)+(g.counterInline?0:1);
     return g;
 }
+// Manual layout so X/Y/Z always get equal widths; a stretch table derived its weights from the first frame's content and collapsed X.
 static bool VectorRow(const char* label,const char* id,XMFLOAT3& value,float step,const char* format,bool positive=false) {
-    bool changed=false;
-    if(ImGui::BeginTable(id,4,ImGuiTableFlags_SizingStretchProp)){
-        ImGui::TableSetupColumn("label",ImGuiTableColumnFlags_WidthFixed,UiScale(48));
-        for(int i=0;i<3;++i)ImGui::TableSetupColumn("axis",ImGuiTableColumnFlags_WidthStretch);
-        ImGui::TableNextRow();ImGui::TableSetColumnIndex(0);ImGui::AlignTextToFramePadding();ImGui::TextUnformatted(label);
-        const ImVec4 colors[]={{.91f,.43f,.50f,1},{.53f,.78f,.47f,1},{.45f,.63f,.93f,1}};const char* axes[]={"X","Y","Z"};float* values=&value.x;
-        for(int i=0;i<3;++i){ImGui::TableSetColumnIndex(i+1);ImGui::PushID(i);ImGui::AlignTextToFramePadding();ImGui::TextColored(colors[i],"%s",axes[i]);ImGui::SameLine(0,UiScale(3));ImGui::SetNextItemWidth(-1);
-            changed|=ContinuousDragFloat("##v",values+i,step,positive?.001f:0,positive?10000.0f:0,format,positive?ImGuiSliderFlags_AlwaysClamp:0);ImGui::PopID();}
-        ImGui::EndTable();
-    }return changed;
+    bool changed=false;ImGui::PushID(id);
+    const ImGuiStyle& style=ImGui::GetStyle();
+    const float start=ImGui::GetCursorPosX(),avail=ImGui::GetContentRegionAvail().x;
+    const float labelWidth=std::max(UiScale(48),ImGui::CalcTextSize(label).x+style.ItemSpacing.x);
+    const float letterGap=UiScale(3),letterWidth=ImGui::CalcTextSize("X").x+letterGap;
+    const float field=std::max(UiScale(24),(avail-labelWidth-3*letterWidth-2*style.ItemSpacing.x)/3);
+    ImGui::AlignTextToFramePadding();ImGui::TextUnformatted(label);
+    const ImVec4 colors[]={{.91f,.43f,.50f,1},{.53f,.78f,.47f,1},{.45f,.63f,.93f,1}};const char* axes[]={"X","Y","Z"};float* values=&value.x;
+    const char* dot=std::strchr(format,'.');const float zero=.5f*std::pow(10.0f,-static_cast<float>(dot?std::atoi(dot+1):3));
+    for(int i=0;i<3;++i){
+        ImGui::SameLine(0,i?style.ItemSpacing.x:0);
+        if(i==0)ImGui::SetCursorPosX(start+labelWidth);
+        // Values that round to zero are shown as 0 instead of "-0.0"; the stored value only changes when edited.
+        float shown=std::fabs(values[i])<zero?0.0f:values[i];
+        ImGui::PushID(i);ImGui::TextColored(colors[i],"%s",axes[i]);ImGui::SameLine(0,letterGap);ImGui::SetNextItemWidth(field);
+        if(ContinuousDragFloat("##v",&shown,step,positive?.001f:0,positive?10000.0f:0,format,positive?ImGuiSliderFlags_AlwaysClamp:0)){values[i]=shown;changed=true;}
+        ImGui::PopID();
+    }
+    ImGui::PopID();return changed;
 }
 void EditorApp::Library() {
     if(ImGui::Button(T("FBX 가져오기...###ImportFbx","Import FBX...###ImportFbx"),{-1,0}))showFbxImport_=true;
