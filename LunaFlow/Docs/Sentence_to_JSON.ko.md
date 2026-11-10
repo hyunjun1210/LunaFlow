@@ -180,7 +180,7 @@ Copilot Studio 에이전트의 지침([AgentInstructions.ko.txt](../Assets/Copil
 **검증 (C++, `EditPlan::Begin`)** 실행 전에 모두 통과해야 한다.
 
 1. `format`/`version`/`requestId`/`sessionId`가 보낸 요청과 일치
-2. `sceneFingerprint`가 현재 장면과 일치(기다리는 동안 직접 편집했으면 거부)
+2. `sceneFingerprint` 비교. 기다리는 동안 동작·효과를 직접 편집했으면 그 편집을 유지한 채 아래 드라이런을 **현재 장면**에서 다시 해 통과하면 적용한다(대화창에 안내 표시). 뼈대(`rigFingerprint`)가 바뀌었으면 거부한다.
 3. `needsClarification: true`면 `question`만 대화창에 보여 주고 종료
 4. 단계 수 1–64, 계획 전체 1 MB 이내, `summary` 4096자 이내
 5. 각 단계: `stepId` 중복 없음, 명령이 전체 목록과 `allowedOperations` 모두에 있음
@@ -339,13 +339,14 @@ Copilot 연결 없이도 VFX AI의 **로컬** 모드는 `GenerateParticleEffect`
 | 메시지 | 원인 | 해결 |
 |---|---|---|
 | `Plan does not match this request/session.` | 계획의 requestId/sessionId가 요청과 다름 | 에이전트 지침의 "그대로 복사" 규칙 확인 후 재게시 |
-| `The scene changed while Copilot was working.` | 응답을 기다리는 동안 직접 편집 | 현재 상태로 다시 요청 |
+| `The character rig changed while Copilot was working.` (편집기: "캐릭터 뼈대가 바뀌어…") | 응답을 기다리는 동안 뼈대가 바뀜(자동 리깅·오브젝트 부착 등) | 같은 요청을 다시 보냄 |
+| `… (기다리는 동안 장면이 바뀌어 이 계획을 현재 장면에 적용할 수 없습니다 …)` | 기다리는 동안 계획이 쓰는 동작·효과를 지움 | 현재 상태로 다시 요청 |
 | `Operation is not allowed for this agent request: …` | 허용되지 않은 명령(예: VFX 요청의 애니메이션 명령) | 지침 재게시, 요청을 해당 탭에 맞게 |
 | `Unknown or incompatible plan reference: …` | 없는 별칭·id·뼈 경로, 또는 종류가 다른 참조(효과 자리에 동작) | 대상을 더 구체적으로 지정해 다시 요청 |
 | `Plan number is outside the supported range.` | 범위 밖 숫자 | 값 범위를 문장에 명시 |
 | `Expected 1 to 64 plan steps within 1 MB.` | 빈 계획 또는 너무 큰 계획 | 요청을 나눔 |
 | `Sword swing needs a unique humanoid …` | 사람형 뼈대를 찾지 못함 | 편집 → 자동 리깅 후 다시 요청 |
-| `Scene edits detected. Remaining AI steps were stopped.` | 단계 실행 중 직접 편집 | Ctrl+Z로 되돌린 뒤 다시 요청 |
+| `Scene edits detected. Remaining AI steps were stopped.` (편집기: "AI가 단계를 적용하는 동안…") | 단계 실행 중 직접 편집 | Ctrl+Z로 되돌린 뒤 다시 요청 |
 | `서로 다른 편집 계획이 여러 개 반환되었습니다.` | 에이전트가 계획을 여러 개 출력 | 지침의 "JSON 객체 하나만" 규칙 확인 |
 
 ## 10. 관련 파일

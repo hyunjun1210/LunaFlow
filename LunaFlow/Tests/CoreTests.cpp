@@ -326,6 +326,16 @@ static void TestEditPlansAndProportions(){
     const auto clean=EditStateFingerprint(model);Throws([&]{executor.Begin(model,request,invalid);},"Bad late step rejects whole plan");Require(EditStateFingerprint(model)==clean,"Preflight failure preserves entire scene");
     executor.Begin(model,request,plan);executor.Advance(model);model.clips[0].name="User edit";
     Throws([&]{executor.Advance(model);},"Manual edits stop remaining AI steps");Require(model.clips[0].name=="User edit"&&model.effects.empty(),"Conflict keeps user's edit");
+    auto fresh=[&](const char* prompt){model=MakeDemoScene();request=EditSceneContext(model,0,9,-1,0,session.Draft(model,model.clips[0],prompt));plan["requestId"]=request["requestId"];plan["sessionId"]=request["sessionId"];};
+    fresh("Edited while waiting");model.clips[0].name="Edited while waiting";SetTransformKey(model.clips[1],9,.25,model.skeleton.bones[9].bindLocal);
+    executor.Begin(model,request,plan);Require(executor.Rebased()&&executor.Running()&&model.clips.size()==3,"Edits made while waiting revalidate the plan instead of discarding the reply");
+    while(executor.Running())executor.Advance(model);
+    Require(model.clips.size()==4&&model.clips[0].name=="Edited while waiting"&&model.clips.back().name=="Fast copy"&&model.effects.size()==1,"Rebased plan keeps the user's edits and applies every step");
+    fresh("Untouched");executor.Begin(model,request,plan);Require(!executor.Rebased(),"An unchanged scene is not reported as rebased");
+    fresh("Target deleted");model.clips.erase(model.clips.begin());const auto deleted=EditStateFingerprint(model);
+    Throws([&]{executor.Begin(model,request,plan);},"Rebased plan whose target was deleted is rejected");Require(EditStateFingerprint(model)==deleted&&!executor.Running(),"Rejected rebase changes nothing");
+    fresh("Rig changed");model.skeleton.bones[9].bindLocal.translation.x+=.1f;
+    try{executor.Begin(model,request,plan);throw std::runtime_error("Rig change must reject the plan");}catch(const std::runtime_error& e){Require(std::string(e.what())==PlanRigChangedError,"Rig changes while waiting reject the plan");}
     model=MakeDemoScene();request=EditSceneContext(model,0,9,-1,0,session.Draft(model,model.clips[0],"Cancelled"));plan["requestId"]=request["requestId"];plan["sessionId"]=request["sessionId"];executor.Begin(model,request,plan);executor.Cancel();executor.Advance(model);Require(model.clips.size()==3,"Cancelled plan changes nothing");
     auto source=MakeDemoScene();ProportionSettings fk;fk.handIK=false;fk.footIK=false;fk.balance=false;fk.fps=8;
     auto same=AdaptMotion(source.skeleton,source.clips[0],source.skeleton,fk);

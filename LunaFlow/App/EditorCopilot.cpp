@@ -74,8 +74,15 @@ void EditorApp::PumpCopilot(float deltaTime){
             AddCopilotReply(message);copilotActive_=false;status_=T("답변을 받았습니다. 편집 계획은 실행되지 않았습니다.","Reply received. No edit plan was executed.");continue;
         }
         NoteCopilotActivity(T("편집 계획을 받아 전체 단계를 검증했습니다.","Received the edit plan and validated every step."));
-        Try([&]{editPlan_.Begin(model_,copilotRequest_,event["plan"]);AddCopilotReply(editPlan_.Summary());copilotStepTime_=0;});
-        if(error_){editPlan_.Cancel();AddCopilotReply(status_);copilotActive_=false;}
+        Try([&]{
+            editPlan_.Begin(model_,copilotRequest_,event["plan"]);AddCopilotReply(editPlan_.Summary());copilotStepTime_=0;
+            if(editPlan_.Rebased()&&editPlan_.Running()){
+                const char* note=T("기다리는 동안 바뀐 내용은 그대로 두고, 계획을 현재 장면에서 다시 검증해 적용합니다. Ctrl+Z는 이번 AI 작업만 되돌립니다.",
+                                   "Edits made while waiting are kept; the plan was revalidated and is applied to the current scene. Ctrl+Z undoes only this AI task.");
+                NoteCopilotActivity(note);AddCopilotReply(note);
+            }
+        });
+        if(error_){ExplainPlanError();editPlan_.Cancel();AddCopilotReply(status_);copilotActive_=false;}
         else if(!editPlan_.Running())copilotActive_=false;
     }
     if(!copilotActive_||!editPlan_.Running())return;
@@ -102,7 +109,16 @@ void EditorApp::PumpCopilot(float deltaTime){
             if(!focus.play){SetTime(0);playing_=true;}
         }
     });
-    if(error_){editPlan_.Cancel();copilotActive_=false;AddCopilotReply(status_);}
+    if(error_){ExplainPlanError();editPlan_.Cancel();copilotActive_=false;AddCopilotReply(status_);}
+}
+void EditorApp::ExplainPlanError(){
+    const std::string failed=T("작업 실패: ","Operation failed: ");
+    if(status_.find(PlanRigChangedError)!=std::string::npos)
+        status_=failed+T("AI가 작업하는 동안 캐릭터 뼈대가 바뀌어 계획을 적용하지 않았습니다. 같은 요청을 다시 보내세요.","The character rig changed while the AI was working, so nothing was applied. Send the request again.");
+    else if(status_.find(PlanSceneEditedError)!=std::string::npos)
+        status_=failed+T("AI가 단계를 적용하는 동안 장면을 직접 편집해 남은 단계를 멈췄습니다. 적용된 부분은 Ctrl+Z로 되돌릴 수 있습니다.","You edited the scene while AI steps were being applied, so the remaining steps were stopped. Ctrl+Z undoes the applied part.");
+    else if(editPlan_.Rebased())
+        status_+=T(" (기다리는 동안 장면이 바뀌어 이 계획을 현재 장면에 적용할 수 없습니다. 같은 요청을 다시 보내세요.)"," (The scene changed while waiting and this plan no longer fits it. Send the request again.)");
 }
 void EditorApp::CopilotProgress(){
     const float line=ImGui::GetTextLineHeight(),inset=line+ImGui::GetStyle().ItemInnerSpacing.x;

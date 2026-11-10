@@ -422,7 +422,10 @@ PlanFocus EditPlan::Apply(ModelAsset& m,const Json& step,References& refs,const 
 void EditPlan::Begin(const ModelAsset& model,const Json& request,const Json& plan){
     *this=EditPlan{};
     if(plan.at("format")!="lunaflow.edit.plan"||plan.at("version")!=1||plan.at("requestId")!=request.at("requestId")||plan.at("sessionId")!=request.at("sessionId"))throw std::runtime_error("Plan does not match this request/session.");
-    if(request.at("sceneFingerprint").get<std::string>()!=EditStateFingerprint(model))throw std::runtime_error("The scene changed while Copilot was working. Send a new request.");
+    // AI replies can take minutes. Motion/effect edits made meanwhile are kept and the plan is revalidated on the
+    // live scene below; a different rig would invalidate the bone poses the plan was computed from.
+    rebased_=request.at("sceneFingerprint").get<std::string>()!=EditStateFingerprint(model);
+    if(rebased_&&request.value("rigFingerprint",std::string{})!=RigFingerprint(model.skeleton))throw std::runtime_error(PlanRigChangedError);
     summary_=plan.value("summary",std::string{});if(summary_.size()>4096)throw std::runtime_error("Plan summary is too long.");
     if(plan.value("needsClarification",false)){summary_=Text(plan.at("question"),4096);return;}
     const auto& steps=plan.at("steps");if(!steps.is_array()||steps.empty()||steps.size()>64||plan.dump().size()>1024*1024)throw std::runtime_error("Expected 1 to 64 plan steps within 1 MB.");
@@ -446,7 +449,7 @@ void EditPlan::Begin(const ModelAsset& model,const Json& request,const Json& pla
 PlanFocus EditPlan::Advance(ModelAsset& model){
     if(!running_)return {};
     try{
-        if(EditStateFingerprint(model)!=expected_)throw std::runtime_error("Scene edits detected. Remaining AI steps were stopped.");
+        if(EditStateFingerprint(model)!=expected_)throw std::runtime_error(PlanSceneEditedError);
         // Apply to a data copy so an invalid step never leaves a partial change.
         ModelAsset next;next.skeleton=model.skeleton;next.clips=model.clips;next.effects=model.effects;auto refs=refs_;
         auto result=Apply(next,steps_.at(next_),refs,prompt_);refs_=std::move(refs);

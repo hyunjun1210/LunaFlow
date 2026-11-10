@@ -77,7 +77,10 @@ static void CoreTests(){
     edit.Begin(model,request,plan);model.effects[0].name="Manual edit";
     Reject([&]{edit.Advance(model);},"Detect manual edits before applying the next VFX step");
     Check(model.effects[0].name=="Manual edit"&&model.effects[0].bone==9,"Conflict preserves the user's edit");
-    Reject([&]{edit.Begin(model,request,plan);},"Reject a response to a stale scene snapshot");
+    edit.Begin(model,request,plan);Check(edit.Rebased()&&edit.Running(),"A reply to an older scene snapshot is revalidated on the live scene");
+    edit.Advance(model);Check(model.effects[0].name=="Manual edit"&&model.effects[0].bone==0,"Rebased VFX step applies while keeping the user's edit");
+    auto rig=model;rig.skeleton.bones[0].bindLocal.translation.y+=.1f;
+    Reject([&]{edit.Begin(rig,request,plan);},"Reject a reply computed for a different rig");
     request=VfxAgentRequest(Request(model,session,0),state);
     auto clarification=Plan(request,Json::array());clarification["needsClarification"]=true;clarification["question"]="Which color?";
     edit.Begin(model,request,clarification);

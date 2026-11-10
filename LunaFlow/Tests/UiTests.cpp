@@ -35,6 +35,7 @@ struct EditorAppTestAccess {
     static void CancelAi(EditorApp& app){app.CancelCopilot();}
     static const std::vector<EffectData>& Effects(const EditorApp& app){return app.model_.effects;}
     static void PauseAt(EditorApp& app,double time){app.playing_=false;app.SetTime(time);}
+    static void Play(EditorApp& app,bool on){app.playing_=on;}
     static void SetPrompt(EditorApp& app,const char* text){strncpy_s(app.vfxAgent_.prompt.data(),app.vfxAgent_.prompt.size(),text,_TRUNCATE);app.vfxMode_=1;}
     static size_t VfxMessages(const EditorApp& app){return app.vfxAgent_.messages.size();}
     static std::string VfxPrompt(const EditorApp& app){return app.vfxAgent_.prompt.data();}
@@ -163,6 +164,14 @@ int main() {
                 for(unsigned y=0;y<desc.Height;++y)image.write(static_cast<const char*>(map.pData)+static_cast<size_t>(y)*map.RowPitch,desc.Width*4);context->Unmap(staging.Get(),0);
             };
             for(int i=0;i<3;++i)tick();saveImage("ui-default-character.rgba");
+            {
+                // AI replies can take minutes; idle frames, playback and the thinking view must never look like a scene edit.
+                using A=EditorAppTestAccess;const auto before=EditStateFingerprint(A::Model(app));
+                A::BeginThinking(app);
+                for(int mode:{0,1,2}){A::Workspace(app,mode);A::Play(app,true);mouse={720,400};for(int i=0;i<40;++i)tick();A::Play(app,false);for(int i=0;i<5;++i)tick();}
+                A::CancelAi(app);mouse={4,70};A::Workspace(app,1);tick();
+                Check(EditStateFingerprint(A::Model(app))==before,"Idle frames and playback leave the AI scene fingerprint unchanged");
+            }
             {
                 const auto& bones=EditorAppTestAccess::Model(app).skeleton.bones;
                 Check(!NeedsAutoRig(EditorAppTestAccess::Model(app))&&std::any_of(bones.begin(),bones.end(),[](const auto& bone){return bone.name=="RightHand";}),"Startup auto-rigs the unskinned default character");

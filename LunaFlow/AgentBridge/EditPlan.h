@@ -4,6 +4,8 @@
 #include <map>
 
 namespace LunaFlow {
+inline constexpr const char* PlanRigChangedError="The character rig changed while Copilot was working. Send a new request.";
+inline constexpr const char* PlanSceneEditedError="Scene edits detected. Remaining AI steps were stopped.";
 std::string EditStateFingerprint(const ModelAsset&);
 Json EditSceneContext(const ModelAsset&,int clip,int bone,int effect,double time,Json request);
 struct PlanStepView { std::string description,operation,state="pending"; };
@@ -14,11 +16,13 @@ struct PlanFocus {
 };
 class EditPlan {
 public:
-    // Preflight the whole plan on an editable-data copy before changing the scene.
+    // Preflight the whole plan on an editable-data copy before changing the scene. Motion or effect edits made
+    // while waiting are kept: the plan is revalidated and applied on top of the live scene (see Rebased()).
     void Begin(const ModelAsset&,const Json& request,const Json& plan);
     PlanFocus Advance(ModelAsset&);
     void Cancel();
     bool Running() const {return running_;}
+    bool Rebased() const {return rebased_;}
     size_t Completed() const {return next_;}
     const std::vector<PlanStepView>& Steps() const {return views_;}
     const std::string& Summary() const {return summary_;}
@@ -32,6 +36,6 @@ private:
     std::vector<PlanStepView> views_;
     std::string expected_,summary_,error_,prompt_;
     size_t next_=0;
-    bool running_=false;
+    bool running_=false,rebased_=false;
 };
 }

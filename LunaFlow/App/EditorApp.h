@@ -56,7 +56,7 @@ private:
     void Viewport(float height);void Timeline(float height);void Settings();
     float TimelineMinimumHeight(float width) const;
     void SendPrompt();void SavePreferences();
-    bool SendCopilot(const std::string&,bool vfx=false);void PumpCopilot(float);void CancelCopilot();void CopilotProgress();
+    bool SendCopilot(const std::string&,bool vfx=false);void PumpCopilot(float);void ExplainPlanError();void CancelCopilot();void CopilotProgress();
     void AddCopilotMessage(bool user,const std::string& text,const std::string& target);
     void ChatMessages(const std::vector<Message>&,const char* assistant);
     void VfxAgentChat(float);bool VfxAgentAvailable() const;bool VfxAgentSignInFree() const;
