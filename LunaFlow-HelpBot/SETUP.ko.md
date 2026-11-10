@@ -6,6 +6,10 @@ LunaFlow 도우미는 편집기 안의 채팅 창(**Shift+F1**)이다. 웹사이
 
 > 설정 전에도 도우미 창은 바로 쓸 수 있다. **내장 도움말** 모드가 `Knowledge/LunaFlow_Help.ko.md`에서
 > 로그인 없이 답한다. 아래 설정은 대화형 Copilot 답변을 켜는 과정이다.
+>
+> **로그인 없이 쓰기:** 에이전트를 **인증 안 함**으로 게시하고 이 폴더의 `settings.public.json`을 두면
+> Microsoft 로그인 없이 연결된다(6단계의 Configure.ps1 불필요). 자세한 내용은
+> [로그인 없이 쓰기](../LunaFlow/Docs/Copilot_Studio_Setup.ko.md#10-로그인-없이-쓰기-시연배포용)를 본다.
 
 ## 1. 새 에이전트 만들기
 

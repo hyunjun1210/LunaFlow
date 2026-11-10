@@ -4,6 +4,13 @@
 Microsoft 로그인 후 테스트 문장을 보내고 응답을 출력하며, 이 기본 모드는 프로젝트를 변경하지 않는다.
 LunaFlow는 `--worker` 모드로 이 프로그램을 숨겨서 실행한다. UTF-8 파이프로 장면과 요청을 전달하고 편집 계획을 받아 C++에서 검증·적용한다.
 
+## 로그인 없는 모드 (`settings.public.json`)
+
+설정 파일에 `"Authentication": "None"`(또는 `TokenEndpoint`)이 있으면 MSAL 로그인 대신 `DirectLineChannel.cs`를 쓴다.
+흐름: 토큰 엔드포인트(인증 헤더 없음) → 지역 설정에서 Direct Line 주소(`*.botframework.com`만 허용) → 대화 생성 → 메시지 전송 → watermark로 응답 수신.
+응답이 온 뒤 2.5초 동안 새 메시지가 없거나 `endOfConversation`이면 끝낸다. 로그인 카드가 오면 "인증 안 함으로 게시" 안내 오류를 낸다.
+에이전트는 Copilot Studio에서 **인증 안 함**으로 게시해야 한다. `--self-test`는 가짜 Direct Line 서버로 이 흐름을 오프라인 검사한다.
+
 ## 새 환경의 SDK 연결
 
 2026-10-19 SDK 팀은 GitHub Copilot harness 에이전트에 대한 사용자 로그인 방식 지원을 지역별로 순차 배포한다고 안내했다.

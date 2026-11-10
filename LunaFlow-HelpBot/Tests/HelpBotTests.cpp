@@ -124,6 +124,9 @@ static void RequestTests(){
     const auto config=root/"LunaFlow-HelpBot"/"settings.local.json";
     std::filesystem::create_directories(config.parent_path());{std::ofstream file(config);file<<"{}";}
     Check(HelpBotSettings(root)==config,"Resolve the dedicated help agent configuration");
+    const auto shared=root/"LunaFlow-HelpBot"/"settings.public.json";
+    {std::ofstream file(shared);file<<R"({"Authentication":"None"})";}
+    Check(HelpBotSettings(root)==shared,"Public sign-in-free help settings take priority");
     std::filesystem::remove_all(root);
 }
 
@@ -246,7 +249,7 @@ static void UiTests(){
         for(int i=0;i<3;++i)frame(1000,700,i==2);
 
         const auto state=Access::Context(app);
-        for(const char* key:{"workspace","uiLanguage","characterFile","projectFile","unsavedChanges","boneCount","needsAutoRig","motionCount","effectCount","webcamMocapOpen","animationAiBusy","animationAgentConfigured","vfxAgentConfigured"})
+        for(const char* key:{"workspace","uiLanguage","characterFile","projectFile","unsavedChanges","boneCount","needsAutoRig","motionCount","effectCount","webcamMocapOpen","animationAiBusy","animationAgentConfigured","aiSignInRequired","vfxAgentConfigured"})
             Check(state.contains(key),"Editor state includes the documented fields");
         Check(Json::parse(state.dump())==state,"Editor state is valid JSON");
         Access::Workspace(app,2);Check(Access::Context(app)["workspace"]=="VFX","Editor state follows the active workspace");

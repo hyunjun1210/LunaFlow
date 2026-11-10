@@ -33,6 +33,9 @@ void MutedWrapped(const std::string& text){
 bool EditorApp::VfxAgentAvailable() const{
     try{VfxAgentSettings(CopilotProjectRoot());return true;}catch(const std::exception&){return false;}
 }
+bool EditorApp::VfxAgentSignInFree() const{
+    try{return AgentSignInFree(VfxAgentSettings(CopilotProjectRoot()));}catch(const std::exception&){return false;}
+}
 void EditorApp::NoteCopilotActivity(const std::string& text){
     if(!text.empty()&&(copilotActivity_.empty()||copilotActivity_.back()!=text)){copilotActivity_.push_back(text);(copilotVfx_?vfxAgent_.scroll:chatScroll_)=true;}
 }
@@ -44,12 +47,15 @@ bool EditorApp::SendCopilot(const std::string& text,bool vfx){
     if(copilotActive_){status_=T("현재 AI 작업을 완료하거나 중지한 뒤 요청하세요.","Finish or stop the current AI task first.");return false;}
     bool submitted=false;
     Try([&]{
-        const auto root=CopilotProjectRoot();const auto config=vfx?VfxAgentSettings(root):std::filesystem::path{};
+        const auto root=CopilotProjectRoot();const auto config=vfx?VfxAgentSettings(root):AgentSettingsFile(root/L"agent_service/copilot_client");
+        const bool signInFree=AgentSignInFree(config);
         auto request=EditSceneContext(model_,selectedClip_,selectedBone_,selectedEffect_,time_,agent_.Draft(model_,Clip(),text));
         // The VFX agent sees its own conversation and a narrowed operation set; it never falls back to the animation agent.
         if(vfx)request=VfxAgentRequest(std::move(request),vfxAgent_);
         copilot_.Submit(root,request,config);copilotRequest_=std::move(request);copilotActive_=true;copilotVfx_=vfx;copilotUndoCaptured_=false;copilotElapsed_=0;copilotThought_=-1;editPlan_=EditPlan{};
-        AddCopilotMessage(true,text,vfx?std::string("VFX"):std::string(ClipLabel(Clip())));status_=T("Copilot Studio에 연결 중입니다. 첫 요청은 브라우저에서 로그인하세요.","Connecting to Copilot Studio. Sign in in your browser on the first request.");
+        AddCopilotMessage(true,text,vfx?std::string("VFX"):std::string(ClipLabel(Clip())));
+        status_=signInFree?T("Copilot Studio에 연결 중입니다. 로그인 없이 바로 사용합니다.","Connecting to Copilot Studio. No sign-in needed."):
+                           T("Copilot Studio에 연결 중입니다. 첫 요청은 브라우저에서 로그인하세요.","Connecting to Copilot Studio. Sign in in your browser on the first request.");
         copilotActivity_.clear();
         NoteCopilotActivity(vfx?T("현재 장면·효과 목록·VFX 대화를 요청에 담았습니다.","Packed the scene, effects and VFX conversation into the request."):T("현재 장면·뼈대·선택한 동작을 요청에 담았습니다.","Packed the scene, rig and selected motion into the request."));
         NoteCopilotActivity(status_);submitted=true;

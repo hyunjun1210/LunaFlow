@@ -2,6 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using Microsoft.Agents.CopilotStudio.Client;
 using Microsoft.Agents.CopilotStudio.Client.Discovery;
@@ -20,6 +21,7 @@ internal static class Program
         Console.OutputEncoding = Encoding.UTF8;
         using var cancel = new CancellationTokenSource();
         Console.CancelKeyPress += (_, e) => { e.Cancel = true; cancel.Cancel(); };
+        bool signInFree = false;
         try
         {
             if (args.Contains("--self-test")) return await SelfTest.RunAsync();
@@ -28,6 +30,8 @@ internal static class Program
             var options = JsonSerializer.Deserialize<ClientOptions>(await File.ReadAllTextAsync(configPath, cancel.Token))
                 ?? throw new InvalidDataException("설정 파일이 비어 있습니다.");
             options.ValidateAgent();
+            signInFree = options.SignInFree;
+            if (signInFree) return await TestSignInFreeAsync(options, args.Contains("--check"), cancel.Token);
             var settings = options.CreateSettings();
             Console.WriteLine($"환경: {options.EnvironmentId}\n에이전트: {options.SchemaName}\n연결 방식: SDK 엔드포인트 자동 검색");
             // A copied URL records the selected agent. Let the current SDK discover the
@@ -80,7 +84,7 @@ internal static class Program
         catch (HttpRequestException e)
         {
             Console.Error.WriteLine($"서버 연결 오류 ({e.StatusCode?.ToString() ?? "network"}): {e.Message}");
-            Console.Error.WriteLine("게시 상태, 에이전트 접근 권한, CopilotStudio.Copilots.Invoke 동의 상태와 지역별 SDK 지원 배포를 확인하세요.");
+            if (!signInFree) Console.Error.WriteLine("게시 상태, 에이전트 접근 권한, CopilotStudio.Copilots.Invoke 동의 상태와 지역별 SDK 지원 배포를 확인하세요.");
             return 5;
         }
         catch (Exception e)
@@ -88,6 +92,32 @@ internal static class Program
             Console.Error.WriteLine(e.Message);
             return 2;
         }
+    }
+
+    // Sign-in-free agents: no account, token cache or app registration is involved.
+    private static async Task<int> TestSignInFreeAsync(ClientOptions options, bool checkOnly, CancellationToken cancel)
+    {
+        var endpoint = options.TokenEndpointUri();
+        Console.WriteLine($"환경: {options.EnvironmentId}\n에이전트: {options.SchemaName}\n연결 방식: 로그인 없음 (Direct Line)\n토큰 엔드포인트: {endpoint.GetLeftPart(UriPartial.Path)}");
+        if (checkOnly)
+        {
+            Console.WriteLine("설정 형식을 확인했습니다. 서버 접속은 아직 하지 않았습니다.");
+            return 0;
+        }
+        using var transport = new HttpClientHandler { AllowAutoRedirect = false };
+        using var channel = new DirectLineChannel(transport);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        timeout.CancelAfter(TimeSpan.FromMinutes(4));
+        Console.WriteLine("로그인 없이 게시된 에이전트에 접속해 연결 확인 메시지를 보냅니다...");
+        bool receivedText = false;
+        foreach (var activity in await channel.AskAsync(endpoint, TestMessage, timeout.Token))
+        {
+            PrintActivity(activity.Type, activity.Text);
+            receivedText |= activity.Type == "message" && !string.IsNullOrWhiteSpace(activity.Text);
+        }
+        if (!receivedText) throw new InvalidOperationException("대화에서 텍스트 응답을 받지 못했습니다. 게시 상태와 Copilot Studio 실행 기록을 확인하세요.");
+        Console.WriteLine("연결 테스트 성공 (로그인 없음). 이 테스트는 편집 명령을 실행하지 않습니다.");
+        return 0;
     }
 
     private static string? Option(string[] args, string name)
@@ -113,11 +143,44 @@ internal sealed class ClientOptions
     public string SchemaName { get; set; } = "";
     public string TenantId { get; set; } = "";
     public string AppClientId { get; set; } = "";
+    // "None" connects through the agent's public Direct Line token endpoint (Copilot Studio "No authentication").
+    public string Authentication { get; set; } = "";
+    public string TokenEndpoint { get; set; } = "";
+
+    [JsonIgnore]
+    public bool SignInFree => string.Equals(Authentication, "None", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(TokenEndpoint);
+
+    public Uri TokenEndpointUri()
+    {
+        if (string.IsNullOrWhiteSpace(TokenEndpoint)) return DeriveTokenEndpoint(EnvironmentId, SchemaName);
+        var (environmentId, schemaName) = ParseTokenEndpoint(TokenEndpoint);
+        if (Guid.Parse(environmentId) != Guid.Parse(EnvironmentId) || schemaName != SchemaName)
+            throw new InvalidDataException("TokenEndpoint와 EnvironmentId/SchemaName이 다릅니다. 에이전트의 모바일 앱 채널에 표시된 토큰 엔드포인트를 확인하세요.");
+        return new Uri(TokenEndpoint);
+    }
+
+    public static Uri DeriveTokenEndpoint(string environmentId, string schemaName)
+    {
+        var id = Guid.Parse(environmentId).ToString("N");
+        return new Uri($"https://{id[..30]}.{id[30..]}.environment.api.powerplatform.com/powervirtualagents/botsbyschema/{schemaName}/directline/token?api-version=2022-03-01-preview");
+    }
+
+    public static (string EnvironmentId, string SchemaName) ParseTokenEndpoint(string value)
+    {
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !uri.IsDefaultPort ||
+            !string.IsNullOrEmpty(uri.UserInfo) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidDataException("TokenEndpoint에는 HTTPS 형식의 Copilot Studio 토큰 엔드포인트가 필요합니다.");
+        var host = Regex.Match(uri.Host, @"\A([a-f0-9]{30})\.([a-f0-9]{2})\.environment\.api\.powerplatform\.com\z", RegexOptions.IgnoreCase);
+        var path = Regex.Match(uri.AbsolutePath, @"\A/powervirtualagents/botsbyschema/([A-Za-z0-9_]+)/directline/token\z");
+        if (!host.Success || !path.Success) throw new InvalidDataException("TokenEndpoint가 프로덕션 환경의 Copilot Studio 토큰 엔드포인트가 아닙니다.");
+        return (Guid.ParseExact(host.Groups[1].Value + host.Groups[2].Value, "N").ToString(), path.Groups[1].Value);
+    }
 
     public void ValidateAgent()
     {
         if (!Guid.TryParse(EnvironmentId, out _)) throw new InvalidDataException("EnvironmentId에 에이전트 메타데이터의 환경 GUID를 입력하세요.");
         if (!Regex.IsMatch(SchemaName, @"\A[A-Za-z0-9_]+\z")) throw new InvalidDataException("SchemaName에 에이전트의 스키마 이름을 입력하세요.");
+        if (SignInFree) TokenEndpointUri();
         if (string.IsNullOrWhiteSpace(SuppliedEndpoint)) return;
         var (environmentId, schemaName) = ParseEndpoint(SuppliedEndpoint);
         if (Guid.Parse(environmentId) != Guid.Parse(EnvironmentId) || schemaName != SchemaName)
@@ -183,6 +246,7 @@ internal static class SelfTest
         options.SchemaName = schema;
         Reject(options.ValidateIdentity, "Reject missing identity before login");
         HelpChecks();
+        await DirectLineChecks(environment, schema);
 
         // Exercise the actual SDK offline. A hard-coded DirectConnectUrl would skip
         // discovery and incorrectly POST straight to the copied conversations URL.
@@ -196,8 +260,104 @@ internal static class SelfTest
         Require(handler.Requests.Count == 1 && handler.Requests[0].Method == HttpMethod.Get &&
             handler.Requests[0].Uri.Host.EndsWith(".environment.api.powerplatform.com", StringComparison.Ordinal) &&
             handler.Requests[0].Uri.AbsoluteUri != endpoint, "SDK performs discovery before conversation creation");
-        Console.WriteLine("PASS: metadata validation, invalid input rejection, help-agent request/reply parsing, and SDK discovery request (offline; no login/server access).");
+        Console.WriteLine("PASS: metadata validation, invalid input rejection, help-agent request/reply parsing, sign-in-free Direct Line flow, and SDK discovery request (offline; no login/server access).");
         return 0;
+    }
+
+    private static async Task DirectLineChecks(string environment, string schema)
+    {
+        var derived = ClientOptions.DeriveTokenEndpoint(environment, schema);
+        Require(derived.AbsoluteUri == "https://00112233445566778899aabbccddee.ff.environment.api.powerplatform.com/powervirtualagents/botsbyschema/test_Agent/directline/token?api-version=2022-03-01-preview", "Derive token endpoint");
+        var anonymous = new ClientOptions { EnvironmentId = environment, SchemaName = schema, Authentication = "None" };
+        anonymous.ValidateAgent();
+        Require(anonymous.SignInFree && anonymous.TokenEndpointUri() == derived, "No-authentication settings need no identity");
+        anonymous.TokenEndpoint = derived.AbsoluteUri;
+        anonymous.ValidateAgent();
+        Require(!new ClientOptions { EnvironmentId = environment, SchemaName = schema }.SignInFree, "Sign-in remains the default");
+        Reject(() => { anonymous.TokenEndpoint = derived.AbsoluteUri.Replace("https://", "http://"); anonymous.ValidateAgent(); }, "Reject HTTP token endpoint");
+        Reject(() => { anonymous.TokenEndpoint = derived.AbsoluteUri.Replace("powerplatform.com", "powerplatform.com.example.org"); anonymous.ValidateAgent(); }, "Reject unrelated token host");
+        Reject(() => { anonymous.TokenEndpoint = derived.AbsoluteUri.Replace("test_Agent", "other_Agent"); anonymous.ValidateAgent(); }, "Reject token endpoint for another agent");
+        Reject(() => { anonymous.TokenEndpoint = derived.AbsoluteUri.Replace("/directline/token", "/directline/token/x"); anonymous.ValidateAgent(); }, "Reject unrelated token path");
+
+        using (var fake = new FakeDirectLine("https://evil.example.com/"))
+        {
+            using var channel = new DirectLineChannel(fake) { PollInterval = TimeSpan.FromMilliseconds(1), QuietPeriod = TimeSpan.FromMilliseconds(60) };
+            var reply = new BridgeWorker.HelpReply();
+            foreach (var activity in await channel.AskAsync(derived, "질문", CancellationToken.None)) reply.Add(activity);
+            Require(fake.TokenCallUnauthenticated && fake.DirectLineBearerOnly && fake.Hosts.All(h => h.EndsWith(".environment.api.powerplatform.com") || h == "directline.botframework.com"),
+                "Token call is anonymous and Direct Line ignores unapproved regional hosts");
+            Require(fake.SentText == "질문" && reply.Text == "첫 줄\n\n둘째 줄" && reply.Suggestions.SequenceEqual(["카메라"]), "Direct Line reply text and suggestions");
+        }
+        using (var fake = new FakeDirectLine(tokenStatus: HttpStatusCode.NotFound))
+        {
+            using var channel = new DirectLineChannel(fake);
+            try { await channel.AskAsync(derived, "x", CancellationToken.None); throw new InvalidOperationException("Self-test failed: unpublished agent accepted"); }
+            catch (HttpRequestException e) { Require(e.Message.Contains("인증 안 함"), "Unpublished no-auth agent explains the fix"); }
+        }
+        using (var fake = new FakeDirectLine(signIn: true))
+        {
+            using var channel = new DirectLineChannel(fake) { PollInterval = TimeSpan.FromMilliseconds(1), QuietPeriod = TimeSpan.FromMilliseconds(60) };
+            try { await channel.AskAsync(derived, "x", CancellationToken.None); throw new InvalidDataException("Sign-in card ignored"); }
+            catch (InvalidOperationException e) { Require(e.Message.Contains("로그인"), "Sign-in card is reported"); }
+        }
+    }
+
+    // Simulates Copilot Studio's token endpoint and Direct Line v3: echo, typing, two messages, then silence.
+    private sealed class FakeDirectLine(string regional = "https://directline.botframework.com/", HttpStatusCode tokenStatus = HttpStatusCode.OK, bool signIn = false) : HttpMessageHandler
+    {
+        public List<string> Hosts { get; } = [];
+        public bool TokenCallUnauthenticated { get; private set; }
+        public bool DirectLineBearerOnly { get; private set; } = true;
+        public string? SentText { get; private set; }
+        private string user = "";
+        private int polls;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var uri = request.RequestUri!;
+            Hosts.Add(uri.Host);
+            var auth = request.Headers.Authorization?.ToString();
+            string body;
+            if (uri.AbsolutePath.EndsWith("/directline/token"))
+            {
+                TokenCallUnauthenticated = auth is null;
+                if (tokenStatus != HttpStatusCode.OK) return new HttpResponseMessage(tokenStatus) { Content = new StringContent("{\"ErrorCode\":4100}") };
+                body = "{\"token\":\"t1\",\"expires_in\":3600,\"conversationId\":\"c1\"}";
+            }
+            else if (uri.AbsolutePath.EndsWith("/regionalchannelsettings"))
+            {
+                if (auth is not null) DirectLineBearerOnly = false;
+                body = JsonSerializer.Serialize(new { channelUrlsById = new { directline = regional } });
+            }
+            else
+            {
+                if (uri.Host != "directline.botframework.com" || auth is not ("Bearer t1" or "Bearer t2")) DirectLineBearerOnly = false;
+                if (uri.AbsolutePath == "/v3/directline/conversations") body = "{\"conversationId\":\"c1\",\"token\":\"t2\"}";
+                else if (request.Method == HttpMethod.Post)
+                {
+                    using var sent = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                    user = sent.RootElement.GetProperty("from").GetProperty("id").GetString()!;
+                    SentText = sent.RootElement.GetProperty("text").GetString();
+                    body = "{\"id\":\"c1|1\"}";
+                }
+                else
+                {
+                    var bot = new { id = "agent", role = "bot" };
+                    object[] page = ++polls switch
+                    {
+                        1 => [new { type = "message", from = new { id = user, role = "user" }, text = "질문" }, new { type = "typing", from = bot }],
+                        2 when signIn => [new { type = "message", from = bot, replyToId = "c1|1", attachments = new[] { new { contentType = "application/vnd.microsoft.card.oauth" } } }],
+                        2 => [new { type = "message", from = bot, replyToId = "c1|1", text = "첫 줄" },
+                              new { type = "message", from = bot, replyToId = "other", text = "다른 대화" }],
+                        3 => [new { type = "message", from = bot, replyToId = "c1|1", text = "둘째 줄", suggestedActions = new { actions = new[] { new { title = "카메라" } } } }],
+                        _ => []
+                    };
+                    if (polls > 1 && !uri.Query.Contains("watermark=")) DirectLineBearerOnly = false;
+                    body = JsonSerializer.Serialize(new { activities = page, watermark = polls.ToString() });
+                }
+            }
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(body, Encoding.UTF8, "application/json") };
+        }
     }
 
     private static void HelpChecks()

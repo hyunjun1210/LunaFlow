@@ -7,7 +7,8 @@ Copilot Studio 도우미 에이전트에 지식(Knowledge) 파일로 업로드�
 ## 시작하기 {#start}
 키워드: 시작, 실행, 처음, 설치, 빌드, 켜는, 열기, start, launch, run, install, build, getting started
 
-- **실행:** LunaFlow 폴더의 `Start-LunaFlow.cmd`를 더블클릭한다. 실행 파일은 `build/Release/LunaFlow.exe`다.
+- **데모 ZIP:** 압축을 풀고 `LunaFlow.exe`를 실행한다. .NET·Visual C++ 설치나 Microsoft 로그인이 필요 없다(Windows 10/11 x64, 인터넷 연결 필요).
+- **실행(소스):** LunaFlow 폴더의 `Start-LunaFlow.cmd`를 더블클릭한다. 실행 파일은 `build/Release/LunaFlow.exe`다.
 - **처음 빌드:** Visual Studio 2022(C++ 데스크톱 개발, Windows SDK, CMake)가 필요하다. 루트에서 `.\Build-LunaFlow.ps1 -Configuration Release -Test`를 실행한다.
 - **Visual Studio로 열기:** `Open-LunaFlow.cmd`를 실행하면 솔루션을 현재 경로로 다시 구성한 뒤 연다.
 - 시작하면 기본 캐릭터(`Chracter Modeling 1.fbx`의 사본)를 열고 자동 리깅을 적용해 바로 동작을 만들 수 있다.
@@ -120,7 +121,7 @@ Unity·Blender 방식이다.
 - 기다리는 동안 반짝이는 **생각 중…** 글자, 경과 시간, 현재 단계가 보인다. 계획이 오면 전체를 미리 검증한 뒤 `편집 적용 중 k/N`으로 단계별 적용한다.
 - **작업 중지**로 멈추고, 적용된 AI 작업은 **Ctrl+Z 한 번**으로 모두 되돌린다.
 - 기다리는 동안 직접 뼈·동작·효과를 고치면 오래된 결과는 적용하지 않는다. 새 상태로 다시 요청한다.
-- 첫 요청 때 브라우저에서 Microsoft 계정으로 로그인한다. 연결 설정은 "Copilot Studio 연결 설정" 주제를 본다.
+- 배포판(데모 ZIP)은 로그인 없이 바로 쓴다. 로그인 모드로 구성한 경우에만 첫 요청 때 브라우저에서 Microsoft 계정으로 로그인한다. 연결 설정은 "Copilot Studio 연결 설정" 주제를 본다.
 - 문장이 JSON 편집 계획으로 바뀌는 원리는 `LunaFlow/Docs/Sentence_to_JSON.ko.md` 문서에 정리되어 있다.
 
 ## VFX 효과 만들기와 속성 {#vfx}
@@ -211,16 +212,23 @@ VFX 탭 오른쪽 아래 **VFX AI**에서 문장으로 효과를 만든다.
 - Windows 화면 배율에 맞춰 UI 크기가 자동으로 바뀌고, 배율이 다른 모니터로 옮기면 다시 계산한다.
 
 ## Copilot Studio 연결 설정 {#copilot-setup}
-키워드: 연결 설정, 로그인, 설정 파일, settings.local.json, 에이전트 연결, 연결 안, 인증, 게시, setup, sign in, login, configure, publish, environment id, schema name
+키워드: 연결 설정, 로그인, 로그인 없이, 설정 파일, settings.local.json, settings.public.json, 에이전트 연결, 연결 안, 인증, 인증 안 함, 게시, setup, sign in, login, no authentication, configure, publish, environment id, schema name
 
-LunaFlow는 세 개의 Copilot Studio 에이전트를 각자의 설정 파일로 연결한다.
+LunaFlow는 세 개의 Copilot Studio 에이전트를 각자의 설정 파일로 연결한다. 기능 폴더에 `settings.public.json`이 있으면 그것을 먼저 쓰고, 없으면 `settings.local.json`을 쓴다.
 
-| 기능 | 설정 파일 | 안내 |
+| 기능 | 폴더 | 안내 |
 |---|---|---|
-| 애니메이션 AI 대화 | `agent_service/copilot_client/settings.local.json` | `LunaFlow/Docs/Copilot_Studio_Setup.ko.md` |
-| VFX AI | `LunaFlow-VFXAgent/settings.local.json` | `LunaFlow-VFXAgent/SETUP.ko.md` |
-| LunaFlow 도우미 | `LunaFlow-HelpBot/settings.local.json` | `LunaFlow-HelpBot/SETUP.ko.md` |
+| 애니메이션 AI 대화 | `agent_service/copilot_client/` | `LunaFlow/Docs/Copilot_Studio_Setup.ko.md` |
+| VFX AI | `LunaFlow-VFXAgent/` | `LunaFlow-VFXAgent/SETUP.ko.md` |
+| LunaFlow 도우미 | `LunaFlow-HelpBot/` | `LunaFlow-HelpBot/SETUP.ko.md` |
 
+**로그인 없이 쓰기 (`settings.public.json`, 배포판 기본값)**
+- Copilot Studio에서 에이전트마다 설정 → 보안 → 인증 → **인증 안 함** → 저장 → **게시**한다.
+- 파일 내용은 `{"Authentication":"None","EnvironmentId":"<GUID>","SchemaName":"<스키마 이름>"}`이다. 프로그램을 실행하면 로그인 창 없이 바로 연결된다.
+- 오류에 "인증 안 함 … 다시 게시"가 보이면 그 에이전트가 아직 인증을 요구하는 상태다. 조직 DLP 정책이 인증 없는 에이전트를 막을 수도 있다.
+- `settings.public.json`을 지우면 아래 로그인 모드로 돌아간다.
+
+**Microsoft 로그인으로 쓰기 (`settings.local.json`)**
 - 각 에이전트를 Copilot Studio에서 만들고 **게시**한 뒤, Settings > Advanced > Metadata의 EnvironmentId와 SchemaName을 확인한다.
 - 루트에서 `.\LunaFlow-HelpBot\Configure.ps1 -EnvironmentId '<GUID>' -SchemaName '<스키마 이름>' -ReuseAnimationSignIn`처럼 설정 파일을 만든다.
 - Entra 앱은 공용 네이티브 클라이언트, 리디렉션 `http://localhost`, 위임 권한 `CopilotStudio.Copilots.Invoke`가 필요하다. 클라이언트 비밀은 쓰지 않는다.
@@ -241,7 +249,8 @@ LunaFlow는 세 개의 Copilot Studio 에이전트를 각자의 설정 파일로
 
 | 증상 | 해결 |
 |---|---|
-| `Copilot SDK client/config is missing` | 루트에서 `Build-CopilotClient.ps1`을 실행하고 해당 기능의 `settings.local.json`을 만든다. |
+| `Copilot SDK client/config is missing` | 루트에서 `Build-CopilotClient.ps1`을 실행하고 해당 기능의 `settings.public.json` 또는 `settings.local.json`을 만든다. |
+| `인증 안 함 … 다시 게시` | Copilot Studio에서 그 에이전트의 인증을 "인증 안 함"으로 바꾸고 게시한다. |
 | `... settings are missing` | 그 기능 폴더의 SETUP.ko.md를 따라 Configure.ps1을 실행한다. 다른 에이전트 설정으로 대체하지 않는다. |
 | 403 / 권한 오류 | 에이전트 게시 상태, 사용 권한, `CopilotStudio.Copilots.Invoke` 위임 권한과 조직 동의를 확인한다. |
 | `The scene changed` | AI를 기다리는 동안 직접 편집했다. 새 상태로 다시 요청한다. |

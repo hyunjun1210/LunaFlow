@@ -10,6 +10,10 @@
 namespace LunaFlow {
 // Folder holding agent_service/copilot_client; each agent resolves its own settings file below it.
 std::filesystem::path CopilotProjectRoot();
+// settings.public.json (sign-in-free demo agent) wins over settings.local.json (Microsoft sign-in).
+std::filesystem::path AgentSettingsFile(const std::filesystem::path& folder);
+// True when the agent connects without sign-in: "Authentication":"None" or a public TokenEndpoint.
+bool AgentSignInFree(const std::filesystem::path& settings);
 // One owned SDK process, with pipe IO entirely outside the rendering thread.
 class CopilotProcess {
 public:

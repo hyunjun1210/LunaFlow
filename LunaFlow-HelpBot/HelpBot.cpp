@@ -1,4 +1,5 @@
 #include "HelpBot.h"
+#include "AgentBridge/CopilotProcess.h"
 #include "Core/EditorCommands.h"
 #include <algorithm>
 #include <fstream>
@@ -281,7 +282,7 @@ std::string HelpDisplayText(const std::string& markdown){
 }
 
 std::filesystem::path HelpBotSettings(const std::filesystem::path& root){
-    const auto config=root/L"LunaFlow-HelpBot/settings.local.json";
+    const auto config=AgentSettingsFile(root/L"LunaFlow-HelpBot");
     if(!std::filesystem::is_regular_file(config))
         throw std::runtime_error("Help bot settings are missing. Follow LunaFlow-HelpBot/SETUP.ko.md and run Configure.ps1. The built-in manual still works offline.");
     return config;

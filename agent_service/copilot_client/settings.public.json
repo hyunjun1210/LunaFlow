@@ -1,0 +1,6 @@
+{
+  "Authentication": "None",
+  "EnvironmentId": "cfe472a7-8d6b-e57d-9381-81572ac35b9d",
+  "SchemaName": "cr72a_lunaflowdirector_lNkFk8",
+  "TokenEndpoint": "https://cfe472a78d6be57d938181572ac35b.9d.environment.api.powerplatform.com/powervirtualagents/botsbyschema/cr72a_lunaflowdirector_lNkFk8/directline/token?api-version=2022-03-01-preview"
+}

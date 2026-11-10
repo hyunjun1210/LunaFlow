@@ -38,7 +38,7 @@ void EditorApp::AddCopilotMessage(bool user,const std::string& text,const std::s
 }
 void EditorApp::VfxAgentChat(float height){
     // One assistant for every VFX request: Copilot plans and refines, Local builds particles offline from keywords.
-    if(vfxMode_<0){vfxAgentReady_=VfxAgentAvailable();vfxMode_=vfxAgentReady_?0:1;}
+    if(vfxMode_<0){vfxAgentReady_=VfxAgentAvailable();vfxSignInFree_=VfxAgentSignInFree();vfxMode_=vfxAgentReady_?0:1;}
     const bool copilotMode=vfxMode_==0;
     ImGui::BeginChild("vfx-agent",{0,height},0,ImGuiWindowFlags_NoScrollbar|ImGuiWindowFlags_NoScrollWithMouse);
     const ImGuiStyle& style=ImGui::GetStyle();
@@ -59,10 +59,12 @@ void EditorApp::VfxAgentChat(float height){
         ImGui::PushStyleColor(ImGuiCol_Button,active?ImVec4{.39f,.29f,.62f,1}:frameBg);
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered,active?ImVec4{.45f,.34f,.70f,1}:hovered);
         ImGui::PushStyleColor(ImGuiCol_Text,active?ImVec4{1,1,1,1}:muted);
-        if(ImGui::Button(modes[i])){vfxMode_=i;if(i==0)vfxAgentReady_=VfxAgentAvailable();}
+        if(ImGui::Button(modes[i])){vfxMode_=i;if(i==0){vfxAgentReady_=VfxAgentAvailable();vfxSignInFree_=VfxAgentSignInFree();}}
         ImGui::PopStyleColor(3);
-        Tip(i==0?T("Copilot Studio VFX 에이전트가 새 효과를 계획하고, 선택한 효과를 대화로 다듬습니다. Microsoft 로그인이 필요합니다.",
-                   "The Copilot Studio VFX agent plans new effects and refines the selected one in conversation. Requires Microsoft sign-in."):
+        Tip(i==0?(vfxSignInFree_?T("Copilot Studio VFX 에이전트가 새 효과를 계획하고, 선택한 효과를 대화로 다듬습니다. 로그인 없이 바로 사용합니다.",
+                                  "The Copilot Studio VFX agent plans new effects and refines the selected one in conversation. No sign-in needed."):
+                                 T("Copilot Studio VFX 에이전트가 새 효과를 계획하고, 선택한 효과를 대화로 다듬습니다. Microsoft 로그인이 필요합니다.",
+                                  "The Copilot Studio VFX agent plans new effects and refines the selected one in conversation. Requires Microsoft sign-in.")):
                  T("인터넷 없이 설명에서 바로 파티클을 만듭니다. 새 효과 만들기만 지원합니다.","Builds particles from your description instantly and offline. Creates new effects only."));
     }
     ImGui::PopStyleVar();

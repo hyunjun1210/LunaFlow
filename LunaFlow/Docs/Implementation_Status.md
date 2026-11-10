@@ -124,3 +124,10 @@ VFX와 애니메이션을 모두 대상으로 한다. 최신 SDK의 환경 ID·�
 - `BridgeWorker.cs`에 도우미 경로(계획 추출 없음, 대화 ID 유지)를 추가했다. 설정 `LunaFlow-HelpBot/settings.local.json`, 로그인 캐시는 애니메이션 에이전트와 공유한다. 에이전트 지침·설정 절차·`Configure.ps1`·`Test-Connection.ps1`을 모듈에 둔다.
 - `Docs/Sentence_to_JSON.ko.md`: 세 입력창과 두 해석기, 요청/계획 JSON 필드, Planner 메시지, 13개 명령, 추출·검증·단계 실행, 예시 7개(검 휘두르기·참조 연결·방향 편집·정보 부족·VFX 후속·로컬 파서·도우미)와 오류 표.
 - 검사: HelpBot(설명서 파싱·순위·요청 크기·Markdown 변환, 100–200% 배율·한/영 창 배치, 가상 Copilot 응답의 단계·추천 질문·대화 유지·실패 대체·중지·Shift+F1) 추가. CTest 8개 통과, Release 빌드 경고 0개.
+
+로그인 없는 배포판 (2026-11-10):
+
+- `DirectLineChannel.cs`: Copilot Studio 토큰 엔드포인트(인증 없음) → 지역 Direct Line(`*.botframework.com`만 허용) → 대화 생성·메시지·watermark 수신. 답장 대상 필터, 입력 중 신호, 2.5초 무응답 종료, 로그인 카드·404·401/403·413·429·네트워크 오류의 한국어 안내.
+- 세 기능 폴더에 `settings.public.json`(`"Authentication": "None"`)을 두고, 있으면 `settings.local.json`보다 먼저 쓴다(`AgentSettingsFile`, `AgentSignInFree`). 로그인 없는 모드에서는 상태·툴팁·도우미 답변에서 로그인 안내를 하지 않는다.
+- `Package-LunaFlow.ps1`: 편집기·자산·VC++ 런타임(앱 로컬)·자체 포함 단일 파일 연결 프로그램·공개 설정·모션캡처 설치 파일·`README_KO.txt`를 `dist\LunaFlow-Demo.zip`으로 묶는다. 로그인 캐시와 `settings.local.json`이 들어가면 실패한다. 모션캡처 폴더는 실행 파일 옆 `LunaFlow-Mocap`을 먼저 찾는다.
+- 검사: 연결 프로그램 `--self-test`에 가짜 Direct Line 서버(익명 토큰, 악성 지역 주소 대체, 답장 필터, 추천 질문, 404 안내, 로그인 카드) 추가. VfxAgent·HelpBot에 공개 설정 우선순위·판별 검사 추가.

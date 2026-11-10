@@ -235,7 +235,12 @@ const char* FramingHint(Framing framing,bool ko) {
     return ko?"그대로 유지하세요":"Hold that position";
 }
 void InitFolder(Mocap::EditorState& m) {
-    if(!m.folder[0])strncpy_s(m.folder,sizeof(m.folder),std::filesystem::path(LUNAFLOW_MOCAP_DIR).u8string().c_str(),_TRUNCATE);
+    if(m.folder[0])return;
+    // A portable package ships LunaFlow-Mocap next to LunaFlow.exe; source builds use the checkout folder.
+    wchar_t file[32768]{};GetModuleFileNameW(nullptr,file,32768);std::error_code ec;
+    const auto packaged=std::filesystem::path(file).parent_path()/L"LunaFlow-Mocap";
+    const auto folder=std::filesystem::is_regular_file(packaged/L"Tracker"/L"tracker.py",ec)?packaged:std::filesystem::path(LUNAFLOW_MOCAP_DIR);
+    strncpy_s(m.folder,sizeof(m.folder),folder.u8string().c_str(),_TRUNCATE);
 }
 std::filesystem::path Root(const Mocap::EditorState& m) {return std::filesystem::u8path(m.folder);}
 }

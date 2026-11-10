@@ -1,4 +1,6 @@
 #include "AgentBridge/CopilotProcess.h"
+#include <cctype>
+#include <fstream>
 #include <stdexcept>
 
 namespace LunaFlow {
@@ -8,8 +10,28 @@ std::wstring Quote(const std::filesystem::path& p){auto s=p.wstring();if(s.find(
 }
 std::filesystem::path CopilotProjectRoot(){
     wchar_t file[32768]{};GetModuleFileNameW(nullptr,file,32768);auto root=std::filesystem::path(file).parent_path();
-    for(int i=0;i<6&&!root.empty();++i){if(std::filesystem::is_regular_file(root/L"agent_service/copilot_client/CopilotConnection.csproj"))return root;auto parent=root.parent_path();if(parent==root)break;root=parent;}
+    // Source checkouts carry the project file; the portable package only ships the published worker.
+    for(int i=0;i<6&&!root.empty();++i){
+        if(std::filesystem::is_regular_file(root/L"agent_service/copilot_client/CopilotConnection.csproj")||
+           std::filesystem::is_regular_file(root/L"agent_service/copilot_client/bin/Release/net10.0/CopilotConnection.exe"))return root;
+        auto parent=root.parent_path();if(parent==root)break;root=parent;
+    }
     throw std::runtime_error("The LunaFlow agent_service folder was not found above the executable folder.");
+}
+std::filesystem::path AgentSettingsFile(const std::filesystem::path& folder){
+    const auto shared=folder/L"settings.public.json";
+    return std::filesystem::is_regular_file(shared)?shared:folder/L"settings.local.json";
+}
+bool AgentSignInFree(const std::filesystem::path& settings){
+    std::error_code error;
+    if(!std::filesystem::is_regular_file(settings,error)||std::filesystem::file_size(settings,error)>64*1024||error)return false;
+    std::ifstream file(settings,std::ios::binary);
+    const auto json=Json::parse(file,nullptr,false);
+    if(!json.is_object())return false;
+    const auto text=[&](const char* key){const auto it=json.find(key);return it!=json.end()&&it->is_string()?it->get<std::string>():std::string{};};
+    auto mode=text("Authentication");
+    for(auto& c:mode)c=static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return mode=="none"||text("TokenEndpoint").find_first_not_of(" \t")!=std::string::npos;
 }
 void CopilotProcess::Publish(Json event){std::lock_guard<std::mutex> lock(mutex_);if(events_.size()<256)events_.push_back(std::move(event));}
 std::vector<Json> CopilotProcess::Poll(){std::lock_guard<std::mutex> lock(mutex_);std::vector<Json> result;while(!events_.empty()){result.push_back(std::move(events_.front()));events_.pop_front();}return result;}
@@ -22,7 +44,7 @@ void CopilotProcess::Submit(const std::filesystem::path& root,const Json& reques
     if(busy_)throw std::runtime_error("Copilot is already working.");
     Cancel();Poll();cancelled_=false;
     const auto binary=root/L"agent_service/copilot_client/bin/Release/net10.0/CopilotConnection.exe";
-    const auto config=settings.empty()?root/L"agent_service/copilot_client/settings.local.json":settings;
+    const auto config=settings.empty()?AgentSettingsFile(root/L"agent_service/copilot_client"):settings;
     if(!std::filesystem::is_regular_file(binary)||!std::filesystem::is_regular_file(config))throw std::runtime_error("Copilot SDK client/config is missing. Run Build-CopilotClient.ps1 in the project folder.");
     auto input=request.dump();if(input.size()>1024*1024)throw std::runtime_error("This scene exceeds the 1 MB AI request budget.");input+='\n';busy_=true;
     worker_=std::thread([this,binary,config,input=std::move(input),request]{
@@ -57,7 +79,7 @@ void CopilotProcess::Submit(const std::filesystem::path& root,const Json& reques
                     }else {line+=chunk[i];if(line.size()>2*1024*1024)throw std::runtime_error("SDK output exceeds its size limit.");}
                 }
             }
-            if(!terminal&&!cancelled_)fail("SDK client exited without a result. Check .NET 10, sign-in and API permissions.");
+            if(!terminal&&!cancelled_)fail("SDK client exited without a result. Check the internet connection, .NET 10 (source builds) and the agent's sign-in settings.");
             WaitForSingleObject(ownedProcess.h,2000);
             {std::lock_guard<std::mutex> lock(mutex_);if(WaitForSingleObject(ownedProcess.h,0)==WAIT_TIMEOUT)TerminateProcess(ownedProcess.h,3);process_=nullptr;}
         }catch(const std::exception& e){

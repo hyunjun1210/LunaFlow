@@ -5,6 +5,7 @@ Windows / DirectX 11 기반 캐릭터 애니메이션 편집기.
 ## 실행과 프로젝트
 
 - **실행:** 최상위 `Start-LunaFlow.cmd` 더블클릭
+- **데모 배포:** 루트에서 `.\Package-LunaFlow.ps1` → `dist\LunaFlow-Demo.zip`. 받는 사람은 압축을 풀고 `LunaFlow.exe`만 실행한다(.NET·VC++ 설치, Microsoft 로그인 불필요).
 - **Visual Studio:** 프로젝트 루트의 `Open-LunaFlow.cmd` 실행 (솔루션을 현재 경로로 다시 구성한 뒤 열기)
 - **실행 파일:** `build/Release/LunaFlow.exe`
 - **전체 프로젝트:** `파일 > 프로젝트 저장` 또는 `Ctrl+S`
@@ -129,7 +130,7 @@ FBX 내보내기는 노드 이름이 서로 달라야 한다. 추가한 소품�
 - **효과 목록(왼쪽):** 체크박스로 켜고 끄며, 더블클릭하면 뷰포트가 그 효과로 이동한다. 우클릭 메뉴나 위쪽 버튼으로 복제·삭제한다.
 - **새 효과 갤러리(왼쪽 아래):** 파티클·불꽃·연기·마법·눈·비·폭발·칼 궤적·스파크·오라를 한 번 눌러 `부착 위치`에 표시된 뼈에 추가한다. `+ > 파티클 시스템`도 사용할 수 있다.
 - **효과 속성(오른쪽):** Unity Inspector처럼 활성화·재생·처음부터 → 부착·재생 구간 → 기본 → 방출 → 모양 → 추가 속도 → 시간에 따른 색상·크기(그라데이션 미리보기) → 렌더러 순서로 접고 편다. 부착 뼈는 검색해서 고르고, 색상은 견본을 눌러 선택한다. 맨 아래에서 복제·삭제한다.
-- **VFX AI(오른쪽 아래):** 하나의 대화창에서 `Copilot`(로그인 AI)과 `로컬`(키워드 규칙)을 전환한다. 예시 버튼을 누르면 입력이 채워지고 Ctrl+Enter로 보낸다. 로컬 결과와 오류 안내도 같은 대화에 표시한다. 머리글의 ▼로 숨기면 속성이 열 전체를 쓰고, 아래 `VFX AI 열기`로 다시 연다.
+- **VFX AI(오른쪽 아래):** 하나의 대화창에서 `Copilot`(VFX 에이전트)과 `로컬`(키워드 규칙)을 전환한다. 예시 버튼을 누르면 입력이 채워지고 Ctrl+Enter로 보낸다. 로컬 결과와 오류 안내도 같은 대화에 표시한다. 머리글의 ▼로 숨기면 속성이 열 전체를 쓰고, 아래 `VFX AI 열기`로 다시 연다.
 
 예: `파란 마법 파티클, 초당 80개, 수명 1.5초, 크기 0.12, 반경 0.3`
 
@@ -166,8 +167,9 @@ FBX 내보내기는 노드 이름이 서로 달라야 한다. 추가한 소품�
 ## Copilot Studio에서 애니메이션·VFX 편집
 
 오른쪽 **AI · Copilot Studio** 대화에 현재 동작이나 효과의 생성·수정을 요청한다.
-첫 요청은 브라우저에서 CNE-AI의 에이전트를 사용할 Microsoft 계정으로 로그인한다.
-로그인 정보는 Windows에서 보호되는 MSAL 캐시를 사용한다. 클라이언트 비밀은 사용하지 않는다.
+기능 폴더에 `settings.public.json`이 있으면(배포판 기본) 로그인 없이 바로 연결한다. 에이전트는 Copilot Studio에서 **인증 안 함**으로 게시되어 있어야 한다.
+`settings.local.json`만 있는 로그인 모드에서는 첫 요청 때 브라우저에서 CNE-AI의 에이전트를 사용할 Microsoft 계정으로 로그인한다.
+로그인 정보는 Windows에서 보호되는 MSAL 캐시를 사용한다. 클라이언트 비밀은 사용하지 않는다. 자세한 내용은 [로그인 없이 쓰기](Docs/Copilot_Studio_Setup.ko.md#10-로그인-없이-쓰기-시연배포용)를 본다.
 
 예: `선택한 동작을 복제해서 1.5초로 줄이고, 복제한 동작의 오른손에 파란 불꽃을 붙여 재생해 줘.`
 
@@ -187,8 +189,8 @@ FBX 내보내기는 노드 이름이 서로 달라야 한다. 추가한 소품�
 요청 후 사용자가 뼈대·동작·효과를 수정하면 오래된 결과와 나머지 단계의 적용을 중단한다.
 **작업 중지**로 취소할 수 있고, 이미 적용한 AI 작업은 **Ctrl+Z 한 번**으로 함께 되돌린다.
 
-설정은 프로젝트의 `agent_service/copilot_client/settings.local.json`이다.
-VFX 탭의 대화는 파티클 명령만 허용하는 **전용 VFX 에이전트**를 사용하며 설정은 `LunaFlow-VFXAgent/settings.local.json`이다.
+설정은 프로젝트의 `agent_service/copilot_client/settings.public.json`(로그인 없이) 또는 `settings.local.json`(로그인)이다.
+VFX 탭의 대화는 파티클 명령만 허용하는 **전용 VFX 에이전트**를 사용하며 설정은 `LunaFlow-VFXAgent/settings.public.json` 또는 `settings.local.json`이다.
 VFX 설정이 없으면 오류를 표시하고 애니메이션 에이전트로 대체하지 않는다. 생성·게시·연결은 [VFX 에이전트 안내](../LunaFlow-VFXAgent/README.ko.md)를 따른다.
 두 대화는 기록이 분리되어 있고, 한 장면을 동시에 수정하지 않도록 한 번에 한 AI 작업만 실행한다.
 CMake에서 .NET SDK가 있으면 연결 프로그램을 함께 빌드하며, 별도로 `Build-CopilotClient.ps1`로 빌드할 수도 있다.
@@ -248,7 +250,7 @@ VSync를 켜면 모니터 주사율의 영향을 받는다.
 
 ## AI 대화
 
-오른쪽 대화는 Microsoft 계정으로 로그인한 **Copilot Studio** 에이전트에 실제로 연결한다.
+오른쪽 대화는 **Copilot Studio** 에이전트에 실제로 연결한다(배포판은 로그인 없이, 로그인 모드는 Microsoft 계정으로).
 자세한 연결과 지원 편집은 위의 [Copilot Studio 안내](#copilot-studio에서-애니메이션vfx-편집)를 따른다.
 
 `AgentBridge/AgentSession`은 요청 시 프로젝트 세션·클립 ID·revision·뼈대 서명을 고정한다.

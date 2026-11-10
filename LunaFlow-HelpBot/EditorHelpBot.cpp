@@ -89,9 +89,11 @@ Json EditorApp::HelpAppContext() const{
     context["webcamMocapOpen"]=mocap_.show||mocap_.active;
     context["animationAiBusy"]=copilotActive_;
     try{
-        const auto root=CopilotProjectRoot();
-        context["animationAgentConfigured"]=std::filesystem::is_regular_file(root/L"agent_service/copilot_client/settings.local.json");
-    }catch(const std::exception&){context["animationAgentConfigured"]=false;}
+        const auto root=CopilotProjectRoot();const auto animation=AgentSettingsFile(root/L"agent_service/copilot_client");
+        context["animationAgentConfigured"]=std::filesystem::is_regular_file(animation);
+        // Lets the helper skip Microsoft sign-in steps in the sign-in-free demo build.
+        context["aiSignInRequired"]=!AgentSignInFree(animation);
+    }catch(const std::exception&){context["animationAgentConfigured"]=false;context["aiSignInRequired"]=true;}
     context["vfxAgentConfigured"]=VfxAgentAvailable();
     return context;
 }

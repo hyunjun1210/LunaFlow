@@ -184,3 +184,28 @@ LLM이 뼈 키를 숫자로 내놓을 수 있다는 사실과, 그 결과가 자
 
 세 에이전트는 설정과 대화 기록이 분리되어 있다. 도우미는 애니메이션 에이전트와 같은 Microsoft 로그인 캐시를 쓰므로 추가 로그인이 거의 없고,
 설정이 없어도 내장 설명서로 바로 답한다. 문장이 각 JSON으로 바뀌는 과정은 [문장 → JSON 변환 구조](Sentence_to_JSON.ko.md)에 정리했다.
+
+## 10. 로그인 없이 쓰기 (시연·배포용)
+
+다른 사람이 다운로드해서 바로 써 보게 하려면 세 에이전트를 **인증 안 함**으로 게시하고, 각 기능 폴더의 `settings.public.json`을 사용한다.
+폴더에 `settings.public.json`이 있으면 `settings.local.json`보다 먼저 쓰며, 이때 LunaFlow는 Microsoft 로그인 없이
+Copilot Studio 토큰 엔드포인트 → Direct Line(`directline.botframework.com`)으로 대화한다.
+
+1. Copilot Studio에서 에이전트마다 **설정 → 보안 → 인증 → 인증 안 함**을 고르고 저장한다.
+2. **게시**한다. 게시 전에는 토큰 엔드포인트가 404를 돌려주며, 앱은 "인증 안 함 … 다시 게시" 안내를 표시한다.
+3. 각 폴더의 `settings.public.json`을 확인한다. 형식은 아래와 같고, `TokenEndpoint`를 생략하면 EnvironmentId와 SchemaName으로 계산한다.
+
+```json
+{
+  "Authentication": "None",
+  "EnvironmentId": "<환경 GUID>",
+  "SchemaName": "<스키마 이름>"
+}
+```
+
+4. 연결 확인: `.\LunaFlow-HelpBot\Test-Connection.ps1`, `.\LunaFlow-VFXAgent\Test-Connection.ps1`, `.\Test-CopilotConnection.ps1` (`-CheckOnly`는 네트워크 없이 형식만 검사).
+5. 배포 ZIP: 루트에서 `.\Package-LunaFlow.ps1`을 실행하면 `dist\LunaFlow-Demo.zip`이 만들어진다. .NET·Visual C++ 런타임을 함께 넣으므로 받는 사람은 압축을 풀고 `LunaFlow.exe`만 실행하면 된다.
+
+- 인증 없는 에이전트는 엔드포인트를 아는 누구나 호출할 수 있고, 사용량은 이 환경의 Copilot Studio 용량에서 차감된다. 시연이 끝나면 인증을 다시 켜고 게시한다.
+- 조직 DLP 정책이 "인증 안 함"을 막으면 관리자 허용이 필요하다.
+- `settings.public.json`을 지우면 기존 Microsoft 로그인 모드(`settings.local.json`)로 돌아간다.

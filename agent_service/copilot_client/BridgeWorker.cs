@@ -65,7 +65,48 @@ internal static class BridgeWorker
             // The help agent only answers questions; it is validated before any sign-in happens.
             var help = agent == "lunaflow.help" ? ParseHelpRequest(request.RootElement) : null;
             var options = JsonSerializer.Deserialize<ClientOptions>(await File.ReadAllTextAsync(configPath, cancel))!;
-            options.ValidateAgent(); options.ValidateIdentity();
+            options.ValidateAgent();
+            // The 4-minute AI budget starts when the agent call starts, never during browser sign-in.
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            void CompleteHelp(HelpReply reply)
+            {
+                var (answer, chips) = SplitSuggestions(reply.Text);
+                Console.WriteLine(JsonSerializer.Serialize(new
+                {
+                    requestId, sessionId, status = "completed",
+                    message = answer.Length > 0 ? answer : "도우미가 빈 답변을 반환했습니다. 질문을 바꿔 다시 시도하세요.",
+                    plan = (object?)null, conversationId = reply.ConversationId ?? "",
+                    suggestions = reply.Suggestions.Concat(chips).Distinct().Take(4).ToList()
+                }));
+                Console.Out.Flush();
+            }
+            void CompletePlan(string text)
+            {
+                var result = ExtractPlan(text);
+                if (result is null) Emit("completed", text.Length == 0 ? "에이전트가 편집 계획을 반환하지 않았습니다." : text);
+                else Emit("completed", "편집 계획을 받았습니다. LunaFlow에서 검증하고 적용합니다.", result);
+            }
+            if (options.SignInFree)
+            {
+                // Agents published with "No authentication": no browser sign-in, account or token cache.
+                var endpoint = options.TokenEndpointUri();
+                using var directTransport = new HttpClientHandler { AllowAutoRedirect = false };
+                using var channel = new DirectLineChannel(directTransport);
+                timeout.CancelAfter(TimeSpan.FromMinutes(4));
+                if (help is not null)
+                {
+                    Emit("running", "LunaFlow 도우미가 사용 설명서를 찾아 답변을 준비하고 있습니다.");
+                    // Each worker starts a fresh anonymous conversation, so the recent history always goes with the question.
+                    var reply = new HelpReply();
+                    foreach (var activity in await channel.AskAsync(endpoint, help.MessageWithHistory, timeout.Token)) reply.Add(activity);
+                    CompleteHelp(reply);
+                    return 0;
+                }
+                Emit("running", "Copilot Studio에서 현재 장면의 편집 계획을 생성하고 있습니다. (로그인 없음)");
+                CompletePlan(MessageText(await channel.AskAsync(endpoint, Planner + "\n" + line, timeout.Token)));
+                return 0;
+            }
+            options.ValidateIdentity();
             var settings = options.CreateSettings();
             Emit("running", "Microsoft 계정 연결 중입니다. 첫 요청은 브라우저에서 로그인하세요.");
             var auth = PublicClientApplicationBuilder.Create(options.AppClientId)
@@ -87,21 +128,11 @@ internal static class BridgeWorker
             }
             using var transport = new HttpClientHandler { AllowAutoRedirect = false };
             var client = new CopilotClient(settings, new ClientFactory(transport, token.AccessToken), NullLogger.Instance);
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
             timeout.CancelAfter(TimeSpan.FromMinutes(4));
             if (help is not null)
             {
                 Emit("running", "LunaFlow 도우미가 사용 설명서를 찾아 답변을 준비하고 있습니다.");
-                var reply = await AskHelpAsync(client, help, message => Emit("running", message), timeout.Token);
-                var (answer, chips) = SplitSuggestions(reply.Text);
-                Console.WriteLine(JsonSerializer.Serialize(new
-                {
-                    requestId, sessionId, status = "completed",
-                    message = answer.Length > 0 ? answer : "도우미가 빈 답변을 반환했습니다. 질문을 바꿔 다시 시도하세요.",
-                    plan = (object?)null, conversationId = reply.ConversationId ?? "",
-                    suggestions = reply.Suggestions.Concat(chips).Distinct().Take(4).ToList()
-                }));
-                Console.Out.Flush();
+                CompleteHelp(await AskHelpAsync(client, help, message => Emit("running", message), timeout.Token));
                 return 0;
             }
             Emit("running", "Copilot Studio에서 현재 장면의 편집 계획을 생성하고 있습니다.");
@@ -112,16 +143,30 @@ internal static class BridgeWorker
                 if (activity.Type == "message" && !string.IsNullOrWhiteSpace(activity.Text)) text.AppendLine(activity.Text);
                 if (text.Length > 1024 * 1024) throw new InvalidDataException("AI 응답 크기 제한을 초과했습니다.");
             }
-            var result = ExtractPlan(text.ToString());
-            if (result is null) Emit("completed", text.Length == 0 ? "에이전트가 편집 계획을 반환하지 않았습니다." : text.ToString());
-            else Emit("completed", "편집 계획을 받았습니다. LunaFlow에서 검증하고 적용합니다.", result);
+            CompletePlan(text.ToString());
             return 0;
         }
         catch (Exception e)
         {
-            var message = e is MsalException msal ? $"Microsoft 로그인 오류 ({msal.ErrorCode}): {msal.Message}" : e.Message;
+            var message = e switch
+            {
+                MsalException msal => $"Microsoft 로그인 오류 ({msal.ErrorCode}): {msal.Message}",
+                OperationCanceledException when !cancel.IsCancellationRequested => "AI 응답 시간이 초과되었습니다. 잠시 뒤 다시 시도하세요.",
+                _ => e.Message
+            };
             Emit("failed", message); return 1;
         }
+    }
+
+    private static string MessageText(IEnumerable<IActivity> activities)
+    {
+        var text = new StringBuilder();
+        foreach (var activity in activities)
+        {
+            if (activity.Type == "message" && !string.IsNullOrWhiteSpace(activity.Text)) text.AppendLine(activity.Text);
+            if (text.Length > 1024 * 1024) throw new InvalidDataException("AI 응답 크기 제한을 초과했습니다.");
+        }
+        return text.ToString();
     }
 
     internal sealed record HelpRequest(string Message, string MessageWithHistory, string? ConversationId);

@@ -1,4 +1,5 @@
 #include "VfxAgent.h"
+#include "AgentBridge/CopilotProcess.h"
 #include <stdexcept>
 
 namespace LunaFlow {
@@ -33,9 +34,9 @@ Json VfxAgentRequest(Json request,const VfxAgentState& state){
     return request;
 }
 std::filesystem::path VfxAgentSettings(const std::filesystem::path& root){
-    const auto config=root/L"LunaFlow-VFXAgent/settings.local.json";
+    const auto config=AgentSettingsFile(root/L"LunaFlow-VFXAgent");
     if(!std::filesystem::is_regular_file(config))
-        throw std::runtime_error("VFX agent settings are missing. Follow LunaFlow-VFXAgent/SETUP.ko.md and create its settings.local.json. The animation agent will not be used as a fallback.");
+        throw std::runtime_error("VFX agent settings are missing. Follow LunaFlow-VFXAgent/SETUP.ko.md and create its settings.public.json or settings.local.json. The animation agent will not be used as a fallback.");
     return config;
 }
 }

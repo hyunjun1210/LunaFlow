@@ -99,7 +99,15 @@ static void CoreTests(){
     const auto config=root/"LunaFlow-VFXAgent"/"settings.local.json";
     std::filesystem::create_directories(config.parent_path());{std::ofstream file(config);file<<"{}";}
     Check(VfxAgentSettings(root)==config,"Resolve only the dedicated agent configuration");
-    std::filesystem::remove(config);std::filesystem::remove(config.parent_path());std::filesystem::remove(root);
+    Check(!AgentSignInFree(config),"Settings without Authentication keep Microsoft sign-in");
+    const auto shared=root/"LunaFlow-VFXAgent"/"settings.public.json";
+    {std::ofstream file(shared);file<<R"({"Authentication":"None","EnvironmentId":"x","SchemaName":"y"})";}
+    Check(VfxAgentSettings(root)==shared&&AgentSignInFree(shared),"Sign-in-free public settings take priority");
+    {std::ofstream file(shared);file<<R"({"TokenEndpoint":"https://example/token"})";}
+    Check(AgentSignInFree(shared),"A public token endpoint is sign-in-free");
+    {std::ofstream file(shared);file<<"not json";}
+    Check(!AgentSignInFree(shared),"Malformed settings are not treated as sign-in-free");
+    std::filesystem::remove(shared);std::filesystem::remove(config);std::filesystem::remove(config.parent_path());std::filesystem::remove(root);
 }
 namespace LunaFlow {
 struct EditorAppTestAccess {

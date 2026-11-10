@@ -1,5 +1,6 @@
 ## Misc artifacts
 .archive/
+dist/
 agent_service/output/
 agent_service/copilot_client/bin/
 agent_service/copilot_client/obj/

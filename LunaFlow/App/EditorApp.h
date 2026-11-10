@@ -59,7 +59,7 @@ private:
     bool SendCopilot(const std::string&,bool vfx=false);void PumpCopilot(float);void CancelCopilot();void CopilotProgress();
     void AddCopilotMessage(bool user,const std::string& text,const std::string& target);
     void ChatMessages(const std::vector<Message>&,const char* assistant);
-    void VfxAgentChat(float);bool VfxAgentAvailable() const;
+    void VfxAgentChat(float);bool VfxAgentAvailable() const;bool VfxAgentSignInFree() const;
     // In-app "LunaFlow 도우미": Copilot Studio help agent with the bundled manual as offline fallback.
     void HelpBotWindow();void ToggleHelpBot();void NewHelpConversation();void PumpHelpBot(float deltaTime);
     bool AskHelpBot(const std::string&);void HandleHelpEvent(const Json&);void StopHelpBot();
@@ -162,7 +162,7 @@ private:
     char prompt_[4096]{};
     int particlePreset_=0;
     int vfxMode_=-1; // -1 = choose on first draw, 0 = Copilot agent, 1 = local rules
-    bool vfxAgentReady_=false;
+    bool vfxAgentReady_=false,vfxSignInFree_=false;
     float vfxGalleryHeight_=0;
     char effectBoneFilter_[64]{};
     char clipName_[256]{};

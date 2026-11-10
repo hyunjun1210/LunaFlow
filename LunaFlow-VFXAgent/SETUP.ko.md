@@ -1,7 +1,11 @@
 # VFX 전용 Copilot Studio 에이전트 만들기
 
 이 안내는 **애니메이션 에이전트는 그대로 두고 VFX 에이전트를 새로 만드는 방법**이다.
-Microsoft 로그인과 기존 SDK 프로그램만 재사용한다. 첨부 HTML의 토큰 브로커, SEALED 값, Direct Line 토큰은 사용하지 않는다.
+로그인 모드는 Microsoft 로그인과 기존 SDK 프로그램만 재사용한다. 첨부 HTML의 토큰 브로커, SEALED 값은 사용하지 않는다.
+
+> **로그인 없이 쓰기:** 에이전트를 **인증 안 함**으로 게시하고 이 폴더의 `settings.public.json`을 두면
+> Copilot Studio가 발급하는 Direct Line 토큰으로 로그인 없이 연결된다(5~6단계의 설정·Entra 준비 불필요).
+> 자세한 내용은 [로그인 없이 쓰기](../LunaFlow/Docs/Copilot_Studio_Setup.ko.md#10-로그인-없이-쓰기-시연배포용)를 본다.
 
 ## 1. 새 에이전트 생성
 
