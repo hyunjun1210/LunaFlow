@@ -131,3 +131,4 @@ VFX와 애니메이션을 모두 대상으로 한다. 최신 SDK의 환경 ID·�
 - 세 기능 폴더에 `settings.public.json`(`"Authentication": "None"`)을 두고, 있으면 `settings.local.json`보다 먼저 쓴다(`AgentSettingsFile`, `AgentSignInFree`). 로그인 없는 모드에서는 상태·툴팁·도우미 답변에서 로그인 안내를 하지 않는다.
 - `Package-LunaFlow.ps1`: 편집기·자산·VC++ 런타임(앱 로컬)·자체 포함 단일 파일 연결 프로그램·공개 설정·모션캡처 설치 파일·`README_KO.txt`를 `dist\LunaFlow-Demo.zip`으로 묶는다. 로그인 캐시와 `settings.local.json`이 들어가면 실패한다. 모션캡처 폴더는 실행 파일 옆 `LunaFlow-Mocap`을 먼저 찾는다.
 - 검사: 연결 프로그램 `--self-test`에 가짜 Direct Line 서버(익명 토큰, 악성 지역 주소 대체, 답장 필터, 추천 질문, 404 안내, 로그인 카드) 추가. VfxAgent·HelpBot에 공개 설정 우선순위·판별 검사 추가.
+- 실제 에이전트의 토큰 엔드포인트가 인증 해제 후에도 404(4100)를 돌려줘, 선택형 `directline.secret`(웹 채널 보안 암호, git 제외)을 추가했다. 있으면 `tokens/generate`로 `dl_` 사용자 토큰을 받고, 암호는 그 요청에만 쓴다. `Set-DemoSecrets.ps1`(가려진 입력·형식 검사·실제 연결 확인), 패키지에 암호 포함 시 경고. 자체 검사: 암호 파싱·로드, 승인된 호스트 외 유출 없음, 사용자 묶음, 403 안내.

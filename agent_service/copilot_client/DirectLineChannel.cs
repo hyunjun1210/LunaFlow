@@ -8,24 +8,31 @@ using Stopwatch = System.Diagnostics.Stopwatch;
 namespace LunaFlow.CopilotConnection;
 
 // Sign-in-free connection for agents published with Copilot Studio "No authentication".
-// Only the agent's public token endpoint is used: no secret, account or token is stored.
+// A conversation token comes from the agent's public token endpoint or, when the demo package
+// carries one, from the web channel's Direct Line secret. No account or token is stored.
 internal sealed class DirectLineChannel(HttpMessageHandler handler) : IDisposable
 {
+    private enum Step { Conversation, PublicToken, SecretToken }
     private static readonly Uri DefaultDirectLine = new("https://directline.botframework.com/");
     private readonly HttpClient http = new(handler, disposeHandler: false) { Timeout = TimeSpan.FromSeconds(90) };
-    private readonly string userId = "lunaflow-" + Guid.NewGuid().ToString("N");
+    // Direct Line requires the "dl_" prefix for user ids bound into a token.
+    private readonly string userId = "dl_lunaflow-" + Guid.NewGuid().ToString("N");
     internal TimeSpan PollInterval { get; init; } = TimeSpan.FromSeconds(1);
     // Copilot Studio sends no end marker for a turn; the reply is complete after this much silence.
     internal TimeSpan QuietPeriod { get; init; } = TimeSpan.FromSeconds(2.5);
+    // Web channel security secret. It only mints a conversation token and is never sent to the conversation itself.
+    internal string? Secret { get; init; }
 
     public void Dispose() => http.Dispose();
 
     // Starts a new conversation, sends one message and returns the agent's activities for that turn.
     public async Task<List<Activity>> AskAsync(Uri tokenEndpoint, string text, CancellationToken cancel)
     {
-        var issued = await SendAsync(HttpMethod.Get, tokenEndpoint, null, null, cancel, tokenRequest: true);
-        var token = Text(issued, "token") ?? throw new InvalidDataException("Copilot Studio 토큰 엔드포인트가 대화 토큰을 반환하지 않았습니다.");
         var directLine = await DirectLineAsync(tokenEndpoint, cancel);
+        var issued = Secret is null
+            ? await SendAsync(HttpMethod.Get, tokenEndpoint, null, null, cancel, Step.PublicToken)
+            : await SendAsync(HttpMethod.Post, new Uri(directLine, "v3/directline/tokens/generate"), Secret, new { user = new { id = userId } }, cancel, Step.SecretToken);
+        var token = Text(issued, "token") ?? throw new InvalidDataException("Copilot Studio가 대화 토큰을 반환하지 않았습니다.");
         var conversation = await SendAsync(HttpMethod.Post, new Uri(directLine, "v3/directline/conversations"), token, null, cancel);
         var conversationId = Text(conversation, "conversationId") ?? Text(issued, "conversationId")
             ?? throw new InvalidDataException("Direct Line 대화를 시작하지 못했습니다.");
@@ -49,7 +56,7 @@ internal sealed class DirectLineChannel(HttpMessageHandler handler) : IDisposabl
             if (page.ValueKind == JsonValueKind.Object && page.TryGetProperty("activities", out var list) && list.ValueKind == JsonValueKind.Array)
                 foreach (var item in list.EnumerateArray())
                 {
-                    if (Text(item, "from", "id") == userId) continue;
+                    if (Text(item, "from", "id") == userId || (sentId is not null && Text(item, "id") == sentId)) continue;
                     var replyTo = Text(item, "replyToId");
                     if (sentId is not null && replyTo is not null && replyTo != sentId) continue;
                     var activity = ToActivity(item, conversationId);
@@ -84,7 +91,7 @@ internal sealed class DirectLineChannel(HttpMessageHandler handler) : IDisposabl
         return DefaultDirectLine;
     }
 
-    private async Task<JsonElement> SendAsync(HttpMethod method, Uri uri, string? token, object? body, CancellationToken cancel, bool tokenRequest = false)
+    private async Task<JsonElement> SendAsync(HttpMethod method, Uri uri, string? token, object? body, CancellationToken cancel, Step step = Step.Conversation)
     {
         using var request = new HttpRequestMessage(method, uri);
         if (token is not null) request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -95,7 +102,7 @@ internal sealed class DirectLineChannel(HttpMessageHandler handler) : IDisposabl
         using (response)
         {
             var text = await response.Content.ReadAsStringAsync(cancel);
-            if (!response.IsSuccessStatusCode) throw new HttpRequestException(Describe(response.StatusCode, tokenRequest), null, response.StatusCode);
+            if (!response.IsSuccessStatusCode) throw new HttpRequestException(Describe(response.StatusCode, step), null, response.StatusCode);
             if (text.Length > 4 * 1024 * 1024) throw new InvalidDataException("AI 응답 크기 제한을 초과했습니다.");
             if (text.Length == 0) return default;
             using var document = JsonDocument.Parse(text);
@@ -103,11 +110,13 @@ internal sealed class DirectLineChannel(HttpMessageHandler handler) : IDisposabl
         }
     }
 
-    internal static string Describe(HttpStatusCode status, bool tokenRequest) => (tokenRequest, (int)status) switch
+    private static string Describe(HttpStatusCode status, Step step) => (step, (int)status) switch
     {
-        (true, 404) => "로그인 없는 접속을 에이전트가 허용하지 않습니다 (404). Copilot Studio에서 이 에이전트의 설정 > 보안 > 인증을 '인증 안 함'으로 저장하고 다시 게시하세요.",
-        (true, 401 or 403) => $"로그인 없는 접속이 거부되었습니다 ({(int)status}). 에이전트 인증을 '인증 안 함'으로 게시했는지, 조직 데이터 정책이 이를 막는지 확인하세요.",
-        (false, 413) => "요청이 너무 큽니다 (413). 동작 키가 아주 많다면 일부를 정리한 뒤 다시 요청하세요.",
+        (Step.PublicToken, 404) => "로그인 없는 접속을 에이전트가 허용하지 않습니다 (404). Copilot Studio에서 인증을 '인증 안 함'으로 게시하거나, 웹 채널 보안의 Direct Line 암호를 directline.secret으로 넣으세요 (Set-DemoSecrets.ps1).",
+        (Step.PublicToken, 401 or 403) => $"로그인 없는 접속이 거부되었습니다 ({(int)status}). 에이전트 인증을 '인증 안 함'으로 게시했는지, 조직 데이터 정책이 이를 막는지 확인하세요.",
+        (Step.SecretToken, 401 or 403) => $"Direct Line 암호가 거부되었습니다 ({(int)status}). 암호를 다시 생성했다면 배포한 사람에게 새 버전을 받으세요. (개발자: Set-DemoSecrets.ps1로 새 암호를 넣고 다시 패키징)",
+        (Step.Conversation, 401 or 403) => $"에이전트가 Direct Line 대화를 거부했습니다 ({(int)status}). 인증을 '인증 안 함'으로 게시했는지 확인하세요.",
+        (Step.Conversation, 413) => "요청이 너무 큽니다 (413). 동작 키가 아주 많다면 일부를 정리한 뒤 다시 요청하세요.",
         (_, 429) => "요청이 너무 많습니다 (429). 잠시 뒤 다시 시도하세요.",
         _ => $"Copilot Studio 서버 오류 ({(int)status}). 잠시 뒤 다시 시도하세요."
     };

@@ -226,6 +226,7 @@ LunaFlow는 세 개의 Copilot Studio 에이전트를 각자의 설정 파일로
 - Copilot Studio에서 에이전트마다 설정 → 보안 → 인증 → **인증 안 함** → 저장 → **게시**한다.
 - 파일 내용은 `{"Authentication":"None","EnvironmentId":"<GUID>","SchemaName":"<스키마 이름>"}`이다. 프로그램을 실행하면 로그인 창 없이 바로 연결된다.
 - 오류에 "인증 안 함 … 다시 게시"가 보이면 그 에이전트가 아직 인증을 요구하는 상태다. 조직 DLP 정책이 인증 없는 에이전트를 막을 수도 있다.
+- 인증을 꺼도 404가 계속되면 제작자가 `Set-DemoSecrets.ps1`로 웹 채널 보안 암호를 `directline.secret`에 넣고 ZIP을 다시 만든다. 이 파일은 GitHub에 올라가지 않는다. "Direct Line 암호가 거부되었습니다"는 암호가 다시 생성된 것이므로 새 ZIP을 받는다.
 - `settings.public.json`을 지우면 아래 로그인 모드로 돌아간다.
 
 **Microsoft 로그인으로 쓰기 (`settings.local.json`)**

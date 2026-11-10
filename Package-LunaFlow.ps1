@@ -57,11 +57,16 @@ if ($LASTEXITCODE -ne 0) { throw 'dotnet publish failed.' }
 if ($LASTEXITCODE -ne 0) { throw 'The published worker failed its offline self-test.' }
 
 Write-Output 'Step 4/5: Adding sign-in-free agent settings, webcam mocap setup files and the guide'
+$secrets = @()
 foreach ($agent in $agents) {
     $target = Join-Path $package $agent.Folder
     New-Item -ItemType Directory -Force -Path $target | Out-Null
     # Only the public settings ship; settings.local.json and sign-in caches stay on this PC.
     Copy-Item (Join-Path $root "$($agent.Folder)\settings.public.json") $target
+    # Optional web channel secret (Set-DemoSecrets.ps1); without it the agent's public token endpoint is used.
+    $secret = Join-Path $root "$($agent.Folder)\directline.secret"
+    if (Test-Path $secret) { Copy-Item $secret $target; $secrets += $agent.Name }
+    else { Write-Warning "No directline.secret for the $($agent.Name) agent: it needs Copilot Studio 'No authentication' token access." }
 }
 $mocap = Join-Path $package 'LunaFlow-Mocap'
 New-Item -ItemType Directory -Force -Path $mocap | Out-Null
@@ -80,3 +85,6 @@ Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($package, $zip, [IO.Compression.CompressionLevel]::Optimal, $true)
 $size = (Get-Item $zip).Length / 1MB
 Write-Output ("Done: {0} ({1:N1} MB)" -f $zip, $size)
+if ($secrets) {
+    Write-Warning ("This ZIP contains Direct Line secrets for: {0}. Share it only for the demo, not in the public GitHub repo; regenerate the secrets in Copilot Studio afterwards." -f ($secrets -join ', '))
+}

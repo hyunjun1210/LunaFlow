@@ -5,7 +5,7 @@ Windows / DirectX 11 기반 캐릭터 애니메이션 편집기.
 ## 실행과 프로젝트
 
 - **실행:** 최상위 `Start-LunaFlow.cmd` 더블클릭
-- **데모 배포:** 루트에서 `.\Package-LunaFlow.ps1` → `dist\LunaFlow-Demo.zip`. 받는 사람은 압축을 풀고 `LunaFlow.exe`만 실행한다(.NET·VC++ 설치, Microsoft 로그인 불필요).
+- **데모 배포:** 루트에서 `.\Package-LunaFlow.ps1` → `dist\LunaFlow-Demo.zip`. 받는 사람은 압축을 풀고 `LunaFlow.exe`만 실행한다(.NET·VC++ 설치, Microsoft 로그인 불필요). 에이전트 토큰 엔드포인트가 404면 먼저 `.\Set-DemoSecrets.ps1`로 웹 채널 암호를 넣는다([설정 10-1](Docs/Copilot_Studio_Setup.ko.md)).
 - **Visual Studio:** 프로젝트 루트의 `Open-LunaFlow.cmd` 실행 (솔루션을 현재 경로로 다시 구성한 뒤 열기)
 - **실행 파일:** `build/Release/LunaFlow.exe`
 - **전체 프로젝트:** `파일 > 프로젝트 저장` 또는 `Ctrl+S`

@@ -5,6 +5,8 @@ agent_service/output/
 agent_service/copilot_client/bin/
 agent_service/copilot_client/obj/
 agent_service/copilot_client/settings.local.json
+# Copilot Studio web channel secrets for the demo package (Set-DemoSecrets.ps1). Never commit.
+directline.secret
 __pycache__/
 *.pyc
 .DS_Store

@@ -8,8 +8,9 @@ LunaFlow는 `--worker` 모드로 이 프로그램을 숨겨서 실행한다. UTF
 
 설정 파일에 `"Authentication": "None"`(또는 `TokenEndpoint`)이 있으면 MSAL 로그인 대신 `DirectLineChannel.cs`를 쓴다.
 흐름: 토큰 엔드포인트(인증 헤더 없음) → 지역 설정에서 Direct Line 주소(`*.botframework.com`만 허용) → 대화 생성 → 메시지 전송 → watermark로 응답 수신.
+설정 파일 옆에 `directline.secret`(웹 채널 보안 암호, git 제외)이 있으면 토큰 엔드포인트 대신 승인된 Direct Line 주소의 `v3/directline/tokens/generate`에서 `dl_` 사용자에 묶인 토큰을 받는다. 암호는 이 요청에만 쓴다.
 응답이 온 뒤 2.5초 동안 새 메시지가 없거나 `endOfConversation`이면 끝낸다. 로그인 카드가 오면 "인증 안 함으로 게시" 안내 오류를 낸다.
-에이전트는 Copilot Studio에서 **인증 안 함**으로 게시해야 한다. `--self-test`는 가짜 Direct Line 서버로 이 흐름을 오프라인 검사한다.
+에이전트는 Copilot Studio에서 **인증 안 함**으로 게시해야 한다. `--self-test`는 가짜 Direct Line 서버로 두 토큰 방식을 오프라인 검사한다.
 
 ## 새 환경의 SDK 연결
 

@@ -206,6 +206,18 @@ Copilot Studio 토큰 엔드포인트 → Direct Line(`directline.botframework.c
 4. 연결 확인: `.\LunaFlow-HelpBot\Test-Connection.ps1`, `.\LunaFlow-VFXAgent\Test-Connection.ps1`, `.\Test-CopilotConnection.ps1` (`-CheckOnly`는 네트워크 없이 형식만 검사).
 5. 배포 ZIP: 루트에서 `.\Package-LunaFlow.ps1`을 실행하면 `dist\LunaFlow-Demo.zip`이 만들어진다. .NET·Visual C++ 런타임을 함께 넣으므로 받는 사람은 압축을 풀고 `LunaFlow.exe`만 실행하면 된다.
 
+### 10-1. 토큰 엔드포인트가 404일 때: Direct Line 암호 (시연 ZIP 전용)
+
+인증을 끄고 게시해도 토큰 엔드포인트가 `404 {"ErrorCode":4100}`를 돌려주는 에이전트가 있다. 이때는 웹 채널 보안의 Direct Line 암호로 대화 토큰을 받는다.
+
+1. 루트에서 `.\Set-DemoSecrets.ps1`을 실행한다.
+2. Copilot Studio → 에이전트 → **설정 → 보안 → 웹 채널 보안**의 **암호 1 [복사]** 결과를 에이전트마다 붙여넣는다(화면에 표시되지 않음). "보안 액세스 필요"는 끈 상태로 둔다.
+3. 스크립트가 각 폴더에 `directline.secret`을 저장하고 로그인 없이 연결 확인 메시지를 보낸다. 세 개 모두 `[성공]`이면 `.\Package-LunaFlow.ps1`로 ZIP을 만든다.
+
+- `directline.secret`은 git에서 제외되며 ZIP에만 들어간다. 연결 프로그램은 암호로 `tokens/generate`에서 짧은 대화 토큰만 받고, 암호를 대화 요청·화면·로그에 쓰지 않는다.
+- ZIP을 받은 사람은 누구나 이 에이전트를 호출할 수 있다. 공개 GitHub 저장소에 ZIP을 올리지 말고, 시연이 끝나면 **다시 생성**으로 암호를 바꾼다(기존 ZIP의 AI는 그때부터 멈춘다).
+- 암호를 채팅·메신저·이슈에 붙여넣지 않는다. 파일을 지우면 토큰 엔드포인트 방식으로 돌아간다.
+
 - 인증 없는 에이전트는 엔드포인트를 아는 누구나 호출할 수 있고, 사용량은 이 환경의 Copilot Studio 용량에서 차감된다. 시연이 끝나면 인증을 다시 켜고 게시한다.
 - 조직 DLP 정책이 "인증 안 함"을 막으면 관리자 허용이 필요하다.
 - `settings.public.json`을 지우면 기존 Microsoft 로그인 모드(`settings.local.json`)로 돌아간다.

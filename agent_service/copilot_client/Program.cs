@@ -27,8 +27,7 @@ internal static class Program
             if (args.Contains("--self-test")) return await SelfTest.RunAsync();
             var configPath = Option(args, "--config") ?? Path.Combine(AppContext.BaseDirectory, "settings.local.json");
             if (args.Contains("--worker")) return await BridgeWorker.RunAsync(configPath, cancel.Token);
-            var options = JsonSerializer.Deserialize<ClientOptions>(await File.ReadAllTextAsync(configPath, cancel.Token))
-                ?? throw new InvalidDataException("설정 파일이 비어 있습니다.");
+            var options = await ClientOptions.LoadAsync(configPath, cancel.Token);
             options.ValidateAgent();
             signInFree = options.SignInFree;
             if (signInFree) return await TestSignInFreeAsync(options, args.Contains("--check"), cancel.Token);
@@ -98,14 +97,17 @@ internal static class Program
     private static async Task<int> TestSignInFreeAsync(ClientOptions options, bool checkOnly, CancellationToken cancel)
     {
         var endpoint = options.TokenEndpointUri();
-        Console.WriteLine($"환경: {options.EnvironmentId}\n에이전트: {options.SchemaName}\n연결 방식: 로그인 없음 (Direct Line)\n토큰 엔드포인트: {endpoint.GetLeftPart(UriPartial.Path)}");
+        var access = options.DirectLineSecret is null
+            ? $"토큰 엔드포인트: {endpoint.GetLeftPart(UriPartial.Path)}"
+            : $"Direct Line 암호: {ClientOptions.SecretFileName} 사용 (내용은 표시하지 않음)";
+        Console.WriteLine($"환경: {options.EnvironmentId}\n에이전트: {options.SchemaName}\n연결 방식: 로그인 없음 (Direct Line)\n{access}");
         if (checkOnly)
         {
             Console.WriteLine("설정 형식을 확인했습니다. 서버 접속은 아직 하지 않았습니다.");
             return 0;
         }
         using var transport = new HttpClientHandler { AllowAutoRedirect = false };
-        using var channel = new DirectLineChannel(transport);
+        using var channel = new DirectLineChannel(transport) { Secret = options.DirectLineSecret };
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
         timeout.CancelAfter(TimeSpan.FromMinutes(4));
         Console.WriteLine("로그인 없이 게시된 에이전트에 접속해 연결 확인 메시지를 보냅니다...");
@@ -149,6 +151,34 @@ internal sealed class ClientOptions
 
     [JsonIgnore]
     public bool SignInFree => string.Equals(Authentication, "None", StringComparison.OrdinalIgnoreCase) || !string.IsNullOrWhiteSpace(TokenEndpoint);
+
+    // Optional, never committed: the agent's web channel security secret, stored next to settings.public.json.
+    public const string SecretFileName = "directline.secret";
+    [JsonIgnore]
+    public string? DirectLineSecret { get; private set; }
+
+    public static async Task<ClientOptions> LoadAsync(string configPath, CancellationToken cancel)
+    {
+        var options = JsonSerializer.Deserialize<ClientOptions>(await File.ReadAllTextAsync(configPath, cancel))
+            ?? throw new InvalidDataException("설정 파일이 비어 있습니다.");
+        var secretFile = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(configPath))!, SecretFileName);
+        // Sign-in mode (settings.local.json) never uses a secret.
+        if (options.SignInFree && File.Exists(secretFile))
+        {
+            if (new FileInfo(secretFile).Length > 4096) throw new InvalidDataException($"{SecretFileName} 파일이 너무 큽니다.");
+            options.DirectLineSecret = ParseSecret(await File.ReadAllTextAsync(secretFile, cancel));
+        }
+        return options;
+    }
+
+    public static string? ParseSecret(string text)
+    {
+        var value = text.Trim();
+        if (value.Length == 0) return null;
+        if (value.Length is < 20 or > 512 || !Regex.IsMatch(value, @"\A[A-Za-z0-9._\-+/=]+\z"))
+            throw new InvalidDataException($"{SecretFileName} 형식이 올바르지 않습니다. Copilot Studio 웹 채널 보안의 암호만 그대로 붙여넣으세요.");
+        return value;
+    }
 
     public Uri TokenEndpointUri()
     {
@@ -260,7 +290,7 @@ internal static class SelfTest
         Require(handler.Requests.Count == 1 && handler.Requests[0].Method == HttpMethod.Get &&
             handler.Requests[0].Uri.Host.EndsWith(".environment.api.powerplatform.com", StringComparison.Ordinal) &&
             handler.Requests[0].Uri.AbsoluteUri != endpoint, "SDK performs discovery before conversation creation");
-        Console.WriteLine("PASS: metadata validation, invalid input rejection, help-agent request/reply parsing, sign-in-free Direct Line flow, and SDK discovery request (offline; no login/server access).");
+        Console.WriteLine("PASS: metadata validation, invalid input rejection, help-agent request/reply parsing, sign-in-free Direct Line flow (token endpoint and web channel secret), and SDK discovery request (offline; no login/server access).");
         return 0;
     }
 
@@ -300,15 +330,60 @@ internal static class SelfTest
             try { await channel.AskAsync(derived, "x", CancellationToken.None); throw new InvalidDataException("Sign-in card ignored"); }
             catch (InvalidOperationException e) { Require(e.Message.Contains("로그인"), "Sign-in card is reported"); }
         }
+        await SecretChecks(derived);
+    }
+
+    private static async Task SecretChecks(Uri derived)
+    {
+        const string secret = "Fake-Secret_0123456789.abcdefghij+/=";
+        Require(ClientOptions.ParseSecret(" \r\n") is null && ClientOptions.ParseSecret("\n " + secret + " \r\n") == secret, "Secret file is trimmed; blank means none");
+        Reject(() => ClientOptions.ParseSecret("short"), "Reject truncated secret");
+        Reject(() => ClientOptions.ParseSecret("\"" + secret + "\""), "Reject quoted secret");
+        Reject(() => ClientOptions.ParseSecret(secret + " " + secret), "Reject two values in the secret file");
+
+        var folder = Directory.CreateTempSubdirectory("lunaflow-selftest-");
+        try
+        {
+            var settingsPath = Path.Combine(folder.FullName, "settings.json");
+            await File.WriteAllTextAsync(Path.Combine(folder.FullName, ClientOptions.SecretFileName), secret + "\r\n", new UTF8Encoding(true));
+            await File.WriteAllTextAsync(settingsPath, "{\"EnvironmentId\":\"00112233-4455-6677-8899-aabbccddeeff\",\"SchemaName\":\"test_Agent\",\"Authentication\":\"None\"}");
+            Require((await ClientOptions.LoadAsync(settingsPath, CancellationToken.None)).DirectLineSecret == secret, "Public settings load the secret file");
+            await File.WriteAllTextAsync(settingsPath, "{\"EnvironmentId\":\"00112233-4455-6677-8899-aabbccddeeff\",\"SchemaName\":\"test_Agent\"}");
+            Require((await ClientOptions.LoadAsync(settingsPath, CancellationToken.None)).DirectLineSecret is null, "Sign-in settings ignore the secret file");
+        }
+        finally { folder.Delete(recursive: true); }
+
+        using (var fake = new FakeDirectLine("https://evil.example.com/", secret: secret))
+        {
+            using var channel = new DirectLineChannel(fake) { Secret = secret, PollInterval = TimeSpan.FromMilliseconds(1), QuietPeriod = TimeSpan.FromMilliseconds(60) };
+            var reply = new BridgeWorker.HelpReply();
+            foreach (var activity in await channel.AskAsync(derived, "질문", CancellationToken.None)) reply.Add(activity);
+            Require(fake.PublicTokenCalls == 0 && fake.SecretTokenCalls == 1 && !fake.SecretLeaked && fake.DirectLineBearerOnly,
+                "Secret only mints a token on the approved Direct Line host");
+            Require(fake.SecretTokenUser is { } user && user.StartsWith("dl_") && user == fake.MessageUser, "Token is bound to the sending user");
+            Require(reply.Text == "첫 줄\n\n둘째 줄", "Secret flow reply text");
+        }
+        using (var fake = new FakeDirectLine(secret: secret, secretStatus: HttpStatusCode.Forbidden))
+        {
+            using var channel = new DirectLineChannel(fake) { Secret = secret };
+            try { await channel.AskAsync(derived, "x", CancellationToken.None); throw new InvalidOperationException("Self-test failed: rejected secret accepted"); }
+            catch (HttpRequestException e) { Require(e.Message.Contains("Direct Line 암호") && !e.Message.Contains(secret), "Rejected secret is explained without revealing it"); }
+        }
     }
 
     // Simulates Copilot Studio's token endpoint and Direct Line v3: echo, typing, two messages, then silence.
-    private sealed class FakeDirectLine(string regional = "https://directline.botframework.com/", HttpStatusCode tokenStatus = HttpStatusCode.OK, bool signIn = false) : HttpMessageHandler
+    private sealed class FakeDirectLine(string regional = "https://directline.botframework.com/", HttpStatusCode tokenStatus = HttpStatusCode.OK, bool signIn = false,
+        string? secret = null, HttpStatusCode secretStatus = HttpStatusCode.OK) : HttpMessageHandler
     {
         public List<string> Hosts { get; } = [];
         public bool TokenCallUnauthenticated { get; private set; }
         public bool DirectLineBearerOnly { get; private set; } = true;
         public string? SentText { get; private set; }
+        public int PublicTokenCalls { get; private set; }
+        public int SecretTokenCalls { get; private set; }
+        public bool SecretLeaked { get; private set; }
+        public string? SecretTokenUser { get; private set; }
+        public string MessageUser => user;
         private string user = "";
         private int polls;
 
@@ -317,11 +392,24 @@ internal static class SelfTest
             var uri = request.RequestUri!;
             Hosts.Add(uri.Host);
             var auth = request.Headers.Authorization?.ToString();
+            bool generate = uri.AbsolutePath == "/v3/directline/tokens/generate";
+            if (secret is not null && auth == "Bearer " + secret && !(generate && uri.Host == "directline.botframework.com" && request.Method == HttpMethod.Post))
+                SecretLeaked = true;
             string body;
             if (uri.AbsolutePath.EndsWith("/directline/token"))
             {
+                PublicTokenCalls++;
                 TokenCallUnauthenticated = auth is null;
                 if (tokenStatus != HttpStatusCode.OK) return new HttpResponseMessage(tokenStatus) { Content = new StringContent("{\"ErrorCode\":4100}") };
+                body = "{\"token\":\"t1\",\"expires_in\":3600,\"conversationId\":\"c1\"}";
+            }
+            else if (generate)
+            {
+                SecretTokenCalls++;
+                if (secret is null || auth != "Bearer " + secret) SecretLeaked = true;
+                if (secretStatus != HttpStatusCode.OK) return new HttpResponseMessage(secretStatus) { Content = new StringContent("{\"error\":{\"code\":\"BadArgument\"}}") };
+                using var sent = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(cancellationToken));
+                SecretTokenUser = sent.RootElement.GetProperty("user").GetProperty("id").GetString();
                 body = "{\"token\":\"t1\",\"expires_in\":3600,\"conversationId\":\"c1\"}";
             }
             else if (uri.AbsolutePath.EndsWith("/regionalchannelsettings"))

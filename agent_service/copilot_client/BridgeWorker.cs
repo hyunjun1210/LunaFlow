@@ -64,7 +64,7 @@ internal static class BridgeWorker
             var dedicatedVfx = agent == "lunaflow.vfx";
             // The help agent only answers questions; it is validated before any sign-in happens.
             var help = agent == "lunaflow.help" ? ParseHelpRequest(request.RootElement) : null;
-            var options = JsonSerializer.Deserialize<ClientOptions>(await File.ReadAllTextAsync(configPath, cancel))!;
+            var options = await ClientOptions.LoadAsync(configPath, cancel);
             options.ValidateAgent();
             // The 4-minute AI budget starts when the agent call starts, never during browser sign-in.
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancel);
@@ -91,7 +91,7 @@ internal static class BridgeWorker
                 // Agents published with "No authentication": no browser sign-in, account or token cache.
                 var endpoint = options.TokenEndpointUri();
                 using var directTransport = new HttpClientHandler { AllowAutoRedirect = false };
-                using var channel = new DirectLineChannel(directTransport);
+                using var channel = new DirectLineChannel(directTransport) { Secret = options.DirectLineSecret };
                 timeout.CancelAfter(TimeSpan.FromMinutes(4));
                 if (help is not null)
                 {
